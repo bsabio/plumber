@@ -3,7 +3,13 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import * as schema from './schema';
 
-const DB_PATH = path.join(process.cwd(), 'data', 'plumber.db');
+let DB_PATH: string;
+if (process.env.VERCEL) {
+  // Vercel serverless environment is read-only except for /tmp
+  DB_PATH = path.join('/tmp', 'plumber.db');
+} else {
+  DB_PATH = path.join(process.cwd(), 'data', 'plumber.db');
+}
 
 // Ensure the data directory exists
 import fs from 'fs';
