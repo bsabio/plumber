@@ -1,9 +1,11 @@
 import type { Metadata } from 'next';
-import { Inter, Geist } from 'next/font/google';
+import { Inter } from 'next/font/google';
 import './globals.css';
-import { cn } from "@/lib/utils";
-
-const geist = Geist({subsets:['latin'],variable:'--font-sans'});
+import { ChatProvider } from '@/context/chat-context';
+import NavBar from '@/components/NavBar';
+import FloatingChat from '@/components/FloatingChat';
+import RoleTestingFooter from '@/components/RoleTestingFooter';
+import { TooltipProvider } from '@/components/ui/tooltip';
 
 const inter = Inter({
   subsets: ['latin'],
@@ -23,8 +25,17 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={cn("font-sans", geist.variable)}>
-      <body>{children}</body>
+    <html lang="en" className={inter.variable}>
+      <body>
+        <TooltipProvider>
+          <ChatProvider>
+            <NavBar />
+            {children}
+            <FloatingChat />
+            <RoleTestingFooter />
+          </ChatProvider>
+        </TooltipProvider>
+      </body>
     </html>
   );
 }

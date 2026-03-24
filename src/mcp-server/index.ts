@@ -22,12 +22,16 @@ export {
   createServiceTicket,
   checkPlumberAvailability,
   generateBusinessMetrics,
+  summarizeTicketProblems,
+  suggestTicketResponse,
   MCP_TOOL_DEFINITIONS,
   // Zod schemas (for external consumers)
   GetNewsletterAdviceInputSchema,
   CreateServiceTicketInputSchema,
   CheckPlumberAvailabilityInputSchema,
   GenerateBusinessMetricsInputSchema,
+  SummarizeTicketProblemsInputSchema,
+  SuggestTicketResponseInputSchema,
 } from './mcp-tools';
 
 // Re-export resources
@@ -110,6 +114,20 @@ export const TOOL_REGISTRY = [
     description: '(Admin Only) Returns a JSON object of ticket statuses (Open vs. Closed) formatted for a Shadcn/Recharts graph.',
     roles: ['admin'],
     parameters: ['dateFrom', 'dateTo'],
+    validated: true,
+  },
+  {
+    name: 'summarize_ticket_problems',
+    description: '(Admin Only) Aggregates open tickets, groups by problem type, returns structured summary.',
+    roles: ['admin'],
+    parameters: ['statusFilter'],
+    validated: true,
+  },
+  {
+    name: 'suggest_ticket_response',
+    description: '(Admin Only) Takes a ticket subject and generates a suggested operator response.',
+    roles: ['admin'],
+    parameters: ['ticketSubject'],
     validated: true,
   },
 ] as const;

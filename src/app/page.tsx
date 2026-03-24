@@ -1,9 +1,9 @@
-import ChatWindow from '@/components/ChatWindow';
+import HeroChat from '@/components/ChatWindow';
 
 export default function Home() {
   return (
     <main>
-      <ChatWindow />
+      <HeroChat />
     </main>
   );
 }

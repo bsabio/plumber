@@ -14,6 +14,8 @@ export type IntentType =
   | 'create_service_ticket'
   | 'check_plumber_availability'
   | 'generate_business_metrics'
+  | 'summarize_ticket_problems'
+  | 'suggest_ticket_response'
   | 'general_help';
 
 export interface ChatMessage {
@@ -41,6 +43,7 @@ export interface ChatResponse {
   message: string;
   toolResult?: ToolResult;
   intent: IntentType;
+  suggestedActions?: string[];
 }
 
 // Role permission map
@@ -71,5 +74,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, IntentType[]> = {
     'check_plumber_availability',
     'manage_users',
     'generate_business_metrics',
+    'summarize_ticket_problems',
+    'suggest_ticket_response',
   ],
 };

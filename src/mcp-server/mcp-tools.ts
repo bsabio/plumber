@@ -651,6 +651,264 @@ export async function generateBusinessMetrics(
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  5. summarize_ticket_problems  (Admin Only)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Input schema — no required inputs for summarize.
+ */
+export const SummarizeTicketProblemsInputSchema = z
+  .object({
+    statusFilter: z
+      .enum(['open', 'in_progress', 'all'], {
+        error: 'statusFilter must be "open", "in_progress", or "all"',
+      })
+      .optional()
+      .default('open')
+      .describe('Which ticket status to summarize'),
+  });
+
+export type SummarizeTicketProblemsInput = z.infer<typeof SummarizeTicketProblemsInputSchema>;
+
+/** Keyword-based issue classification */
+const ISSUE_CATEGORIES: { category: string; keywords: string[]; icon: string }[] = [
+  { category: 'Leaks', keywords: ['leak', 'drip', 'dripping', 'water damage', 'seeping', 'wet'], icon: '💧' },
+  { category: 'Clogs', keywords: ['clog', 'block', 'backed up', 'slow drain', 'overflow', 'plugged'], icon: '🚫' },
+  { category: 'Installations', keywords: ['install', 'replace', 'new', 'upgrade', 'setup', 'mount'], icon: '🔧' },
+  { category: 'Emergency', keywords: ['emergency', 'burst', 'flood', 'urgent', 'broken pipe', 'no water'], icon: '🚨' },
+  { category: 'Maintenance', keywords: ['maintenance', 'inspect', 'check', 'routine', 'annual', 'service'], icon: '🛠️' },
+];
+
+function classifyIssue(text: string): string {
+  const lower = text.toLowerCase();
+  for (const cat of ISSUE_CATEGORIES) {
+    if (cat.keywords.some((kw) => lower.includes(kw))) return cat.category;
+  }
+  return 'Other';
+}
+
+/**
+ * summarize_ticket_problems
+ * Aggregates tickets, groups by problem type, returns a structured summary.
+ */
+export async function summarizeTicketProblems(
+  rawInput: unknown
+): Promise<ToolResult> {
+  const parsed = SummarizeTicketProblemsInputSchema.safeParse(rawInput);
+  if (!parsed.success) {
+    return {
+      toolName: 'summarize_ticket_problems',
+      success: false,
+      data: { validationErrors: parsed.error.flatten().fieldErrors },
+      message: `❌ Invalid input: ${parsed.error.issues.map((i) => i.message).join('; ')}`,
+    };
+  }
+
+  const { statusFilter } = parsed.data;
+
+  try {
+    let allTickets;
+    if (statusFilter === 'all') {
+      allTickets = db.select().from(tickets).orderBy(desc(tickets.createdAt)).all();
+    } else {
+      allTickets = db
+        .select()
+        .from(tickets)
+        .where(eq(tickets.status, statusFilter as 'open' | 'in_progress'))
+        .orderBy(desc(tickets.createdAt))
+        .all();
+    }
+
+    if (allTickets.length === 0) {
+      return {
+        toolName: 'summarize_ticket_problems',
+        success: true,
+        data: { categories: [], totalTickets: 0 },
+        message: `📋 No ${statusFilter} tickets found to summarize.`,
+      };
+    }
+
+    // Group by issue category
+    const groups: Record<string, { count: number; tickets: typeof allTickets; priority: Record<string, number> }> = {};
+    for (const t of allTickets) {
+      const category = classifyIssue(`${t.subject} ${t.description}`);
+      if (!groups[category]) groups[category] = { count: 0, tickets: [], priority: {} };
+      groups[category].count++;
+      groups[category].tickets.push(t);
+      groups[category].priority[t.priority] = (groups[category].priority[t.priority] || 0) + 1;
+    }
+
+    // Build summary
+    const categories = Object.entries(groups)
+      .sort((a, b) => b[1].count - a[1].count)
+      .map(([category, data]) => {
+        const catInfo = ISSUE_CATEGORIES.find((c) => c.category === category);
+        const icon = catInfo?.icon || '📌';
+        const topTickets = data.tickets.slice(0, 3).map((t) => ({
+          subject: t.subject,
+          priority: t.priority,
+          status: t.status,
+          id: t.id,
+        }));
+        return { category, icon, count: data.count, priorityBreakdown: data.priority, topTickets };
+      });
+
+    const summaryLines = categories.map(
+      (c) => `${c.icon} **${c.category}:** ${c.count} ticket(s) — ${Object.entries(c.priorityBreakdown).map(([p, n]) => `${n} ${p}`).join(', ')}`
+    );
+
+    return {
+      toolName: 'summarize_ticket_problems',
+      success: true,
+      data: { categories, totalTickets: allTickets.length, filter: statusFilter } as unknown as Record<string, unknown>,
+      message: `📊 **Problem Summary (${statusFilter} tickets — ${allTickets.length} total):**\n\n${summaryLines.join('\n')}\n\n💡 *Click a ticket in the table for response suggestions.*`,
+    };
+  } catch (error) {
+    return {
+      toolName: 'summarize_ticket_problems',
+      success: false,
+      data: {},
+      message: `Error summarizing tickets: ${(error as Error).message}`,
+    };
+  }
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+//  6. suggest_ticket_response  (Admin Only)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Input schema for suggest_ticket_response.
+ */
+export const SuggestTicketResponseInputSchema = z
+  .object({
+    ticketSubject: z
+      .string()
+      .min(2, 'ticketSubject must be at least 2 characters')
+      .describe('The subject or description of the ticket to suggest a response for'),
+  });
+
+export type SuggestTicketResponseInput = z.infer<typeof SuggestTicketResponseInputSchema>;
+
+/**
+ * suggest_ticket_response
+ * Reads the ticket details + relevant newsletter content and generates
+ * a suggested operator response with recommended service type and priority.
+ */
+export async function suggestTicketResponse(
+  rawInput: unknown
+): Promise<ToolResult> {
+  const parsed = SuggestTicketResponseInputSchema.safeParse(rawInput);
+  if (!parsed.success) {
+    return {
+      toolName: 'suggest_ticket_response',
+      success: false,
+      data: { validationErrors: parsed.error.flatten().fieldErrors },
+      message: `❌ Invalid input: ${parsed.error.issues.map((i) => i.message).join('; ')}`,
+    };
+  }
+
+  const { ticketSubject } = parsed.data;
+
+  try {
+    // Find ticket by subject (fuzzy match)
+    const allTickets = db.select().from(tickets).all();
+    const matchedTicket = allTickets.find(
+      (t) =>
+        t.subject.toLowerCase().includes(ticketSubject.toLowerCase()) ||
+        ticketSubject.toLowerCase().includes(t.subject.toLowerCase())
+    );
+
+    // Get relevant newsletter content for advice
+    const issueType = classifyIssue(ticketSubject);
+    const relevantArticles = db
+      .select()
+      .from(newsletterContent)
+      .where(eq(newsletterContent.isActive, true))
+      .all()
+      .filter((a) => {
+        const combined = `${a.title} ${a.body}`.toLowerCase();
+        const searchTerms = ticketSubject.toLowerCase().split(' ').filter((w) => w.length > 3);
+        return searchTerms.some((term) => combined.includes(term)) || combined.includes(issueType.toLowerCase());
+      })
+      .slice(0, 2);
+
+    // Build suggested response
+    const priorityMap: Record<string, string> = {
+      Leaks: 'high',
+      Clogs: 'medium',
+      Emergency: 'urgent',
+      Installations: 'medium',
+      Maintenance: 'low',
+      Other: 'medium',
+    };
+
+    const serviceMap: Record<string, string> = {
+      Leaks: 'repair',
+      Clogs: 'repair',
+      Emergency: 'emergency',
+      Installations: 'installation',
+      Maintenance: 'maintenance',
+      Other: 'inspection',
+    };
+
+    const suggestedPriority = priorityMap[issueType] || 'medium';
+    const suggestedService = serviceMap[issueType] || 'inspection';
+
+    const responseData = {
+      ticketInfo: matchedTicket
+        ? { id: matchedTicket.id, subject: matchedTicket.subject, status: matchedTicket.status, priority: matchedTicket.priority, description: matchedTicket.description }
+        : { subject: ticketSubject, note: 'No exact ticket match found — using subject for analysis' },
+      issueCategory: issueType,
+      suggestedPriority,
+      suggestedServiceType: suggestedService,
+      relevantArticles: relevantArticles.map((a) => ({ title: a.title, category: a.category })),
+    };
+
+    // Generate the operator-facing message
+    const ticketLine = matchedTicket
+      ? `🎫 **Ticket:** "${matchedTicket.subject}" (${matchedTicket.status}, ${matchedTicket.priority} priority)`
+      : `🎫 **Subject:** "${ticketSubject}"`;
+
+    const articleLines = relevantArticles.length > 0
+      ? `\n📰 **Related Articles:** ${relevantArticles.map((a) => `"${a.title}"`).join(', ')}`
+      : '';
+
+    const suggestedResponse = getSuggestedResponseText(issueType, ticketSubject, matchedTicket?.description);
+
+    return {
+      toolName: 'suggest_ticket_response',
+      success: true,
+      data: responseData as unknown as Record<string, unknown>,
+      message: `💬 **Suggested Response for Operator:**\n\n${ticketLine}\n📋 **Issue Type:** ${issueType}\n⚡ **Recommended Priority:** ${suggestedPriority}\n🔧 **Service Type:** ${suggestedService}${articleLines}\n\n---\n\n📝 **Draft Response:**\n\n${suggestedResponse}`,
+    };
+  } catch (error) {
+    return {
+      toolName: 'suggest_ticket_response',
+      success: false,
+      data: {},
+      message: `Error generating response suggestion: ${(error as Error).message}`,
+    };
+  }
+}
+
+function getSuggestedResponseText(issueType: string, subject: string, description?: string): string {
+  const desc = description || subject;
+  const templates: Record<string, string> = {
+    Leaks: `Thank you for reporting your leak issue. Based on your description ("${desc.slice(0, 80)}..."), we recommend scheduling an **urgent repair visit**. Our technician will:\n\n1. Inspect the source of the leak\n2. Provide an on-site assessment\n3. Perform the repair or recommend next steps\n\n⏰ We can typically respond to leak issues within 24 hours. Would you like to confirm an appointment?`,
+    Clogs: `We've received your report about a drainage issue. For clog problems, we recommend:\n\n1. **Avoid using chemical drain cleaners** — they can damage pipes\n2. Schedule a **professional drain clearing** appointment\n3. Our technician will use camera inspection if needed\n\n📅 We have availability this week. Shall we book a time slot?`,
+    Emergency: `🚨 **URGENT:** Your issue has been flagged as an emergency. We are prioritizing your case.\n\n**Immediate steps:**\n1. Shut off the main water supply if possible\n2. Our emergency team will contact you within 30 minutes\n3. A technician will be dispatched ASAP\n\nPlease confirm your address and the best phone number to reach you.`,
+    Installations: `Thank you for your installation request. Here's what we recommend:\n\n1. Schedule a **free consultation** at your property\n2. Our technician will assess the installation requirements\n3. We'll provide a detailed quote before any work begins\n\n📞 Would you like to schedule the consultation?`,
+    Maintenance: `We appreciate you scheduling maintenance! Regular maintenance helps prevent costly repairs. Our service includes:\n\n1. Full plumbing system inspection\n2. Water pressure check\n3. Drain flow testing\n4. Fixture assessment\n\n📅 Our next available maintenance slot is this week. Would that work for you?`,
+    Other: `Thank you for reaching out regarding "${subject}". We'd like to learn more about your issue so we can assist you properly.\n\nCould you provide:\n1. A detailed description of the problem\n2. When the issue started\n3. Your preferred appointment time\n\nWe'll have a specialist review your case and get back to you shortly.`,
+  };
+
+  return templates[issueType] || templates['Other'];
+}
+
+
+// ═══════════════════════════════════════════════════════════════
 //  MCP Tool Definitions — for server registration
 // ═══════════════════════════════════════════════════════════════
 
@@ -686,5 +944,21 @@ export const MCP_TOOL_DEFINITIONS = [
     inputSchema: GenerateBusinessMetricsInputSchema,
     roles: ['admin'] as const,
     handler: generateBusinessMetrics,
+  },
+  {
+    name: 'summarize_ticket_problems',
+    description:
+      '(Admin Only) Aggregates open tickets, groups by problem type (leaks, clogs, installs, emergency), and returns a structured summary.',
+    inputSchema: SummarizeTicketProblemsInputSchema,
+    roles: ['admin'] as const,
+    handler: summarizeTicketProblems,
+  },
+  {
+    name: 'suggest_ticket_response',
+    description:
+      '(Admin Only) Takes a ticket subject, reads ticket details + newsletter content, and generates a suggested operator response.',
+    inputSchema: SuggestTicketResponseInputSchema,
+    roles: ['admin'] as const,
+    handler: suggestTicketResponse,
   },
 ] as const;

@@ -1,6 +1,13 @@
 import type { UserRole, IntentType, ToolResult, ChatResponse } from '@/lib/types';
 import { hasPermission, getAccessDeniedMessage } from '@/mcp-server/auth';
 import {
+  getHelpMessage as getSystemHelpMessage,
+  getLeadCaptureNudge,
+  getNewsletterTieIn,
+  getConversationalFallback,
+} from '@/lib/system-prompt';
+import { generateResponse } from '@/lib/ai-client';
+import {
   queryTickets,
   getTicketDetail,
   createTicket,
@@ -14,6 +21,8 @@ import {
   createServiceTicket,
   checkPlumberAvailability,
   generateBusinessMetrics,
+  summarizeTicketProblems,
+  suggestTicketResponse,
 } from '@/mcp-server/mcp-tools';
 import { db } from '@/db';
 import { users } from '@/db/schema';
@@ -27,6 +36,22 @@ import { eq } from 'drizzle-orm';
 const INTENT_PATTERNS: { intent: IntentType; keywords: string[] }[] = [
   // ── New Zod-validated MCP tools (higher priority) ──
   {
+    intent: 'summarize_ticket_problems',
+    keywords: [
+      'summarize problems', 'summarize tickets', 'problem summary',
+      'summarize user problems', 'ticket summary', 'issue summary',
+      'breakdown of problems', 'what are the problems', 'common issues',
+    ],
+  },
+  {
+    intent: 'suggest_ticket_response',
+    keywords: [
+      'suggest response', 'draft response', 'suggested response',
+      'how to respond', 'response for ticket', 'recommend response',
+      'what should i say', 'help me respond',
+    ],
+  },
+  {
     intent: 'generate_business_metrics',
     keywords: [
       'business metrics', 'metrics', 'dashboard', 'analytics',
@@ -39,6 +64,7 @@ const INTENT_PATTERNS: { intent: IntentType; keywords: string[] }[] = [
     keywords: [
       'availability', 'available', 'open slots', 'free slots',
       'when can', 'next available', 'check availability',
+      'works for me', 'that day', 'this week',
     ],
   },
   {
@@ -81,6 +107,8 @@ const INTENT_PATTERNS: { intent: IntentType; keywords: string[] }[] = [
     keywords: [
       'schedule', 'book', 'appointment', 'set up a visit',
       'come out', 'send someone',
+      'monday', 'tuesday', 'wednesday', 'thursday', 'friday',
+      'saturday', 'sunday', 'tomorrow', 'next week',
     ],
   },
   {
@@ -105,6 +133,13 @@ const INTENT_PATTERNS: { intent: IntentType; keywords: string[] }[] = [
       'user list', 'view users',
     ],
   },
+  {
+    intent: 'general_help',
+    keywords: [
+      'help', 'support', 'what can you do', 'menu', 'options',
+      'how does this work', 'not sure',
+    ],
+  },
 ];
 
 /**
@@ -121,6 +156,18 @@ function classifyIntent(message: string): IntentType {
     }
   }
 
+  // Fallback for greetings/social chat
+  if (lowerMsg.match(/\b(hi|hello|hey|who are you|thanks|thank you|bye)\b/)) {
+    return 'general_help';
+  }
+
+  // Fallback for plumbing-related questions → try newsletter RAG
+  const plumbingTerms = /\b(pipe|plumb|drain|faucet|water|toilet|sink|shower|valve|sewer|septic|heater)\b/;
+  if (plumbingTerms.test(lowerMsg) && (lowerMsg.includes('?') || lowerMsg.includes('how') || lowerMsg.includes('why'))) {
+    return 'get_newsletter_advice';
+  }
+
+  // Everything else → LLM conversational handler
   return 'general_help';
 }
 
@@ -355,6 +402,23 @@ export async function mediate(
       break;
     }
 
+    case 'summarize_ticket_problems': {
+      const lower = message.toLowerCase();
+      let statusFilter: 'open' | 'in_progress' | 'all' = 'open';
+      if (lower.includes('all')) statusFilter = 'all';
+      else if (lower.includes('in progress')) statusFilter = 'in_progress';
+      toolResult = await summarizeTicketProblems({ statusFilter });
+      break;
+    }
+
+    case 'suggest_ticket_response': {
+      // Try to extract the ticket subject from the message
+      const subjectMatch = message.match(/(?:response\s+(?:for|to)|respond\s+to)\s+["']?(.+?)(?:["']?$|\.|$)/i);
+      const ticketSubject = subjectMatch?.[1]?.trim() || message.replace(/suggest\s+(?:a\s+)?response\s*/i, '').trim();
+      toolResult = await suggestTicketResponse({ ticketSubject });
+      break;
+    }
+
     // ── Legacy tools ──
 
     case 'query_tickets':
@@ -397,6 +461,25 @@ export async function mediate(
       break;
 
     case 'schedule_appointment': {
+      // PIVOT: If user wants to "book" but hasn't given a date, check availability first
+      const lower = message.toLowerCase();
+      const hasDate = lower.match(/\b(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d{4}-\d{2}-\d{2})\b/);
+      
+      if (!hasDate) {
+        // Run availability check instead of attempting to book
+        const date = extractDateFromMessage('tomorrow');
+        toolResult = await checkPlumberAvailability({ date });
+        // Let the LLM craft the scheduling response with availability data
+        const pivotContext = formatToolContext('check_plumber_availability', toolResult);
+        const pivotMessage = await generateResponse(message, role, pivotContext);
+        return {
+          message: pivotMessage,
+          toolResult,
+          intent: 'check_plumber_availability',
+          suggestedActions: getSuggestedActions('check_plumber_availability', role, toolResult),
+        };
+      }
+
       const apptParams = extractAppointmentParams(message);
       toolResult = await scheduleAppointment({
         userId: resolvedUserId,
@@ -422,21 +505,98 @@ export async function mediate(
       break;
 
     case 'general_help':
-    default:
+    default: {
+      // No tool needed — pure conversation
+      const llmResponse = await generateResponse(message, role);
       return {
-        message: getHelpMessage(role),
+        message: llmResponse,
         intent: 'general_help',
+        suggestedActions: ['Any plumbing tips?', 'I have a leak', 'Schedule maintenance'],
       };
+    }
   }
 
-  // 5. Build the response message
-  const responseMessage = buildResponseMessage(intent, toolResult);
+  // 5. Build response — ALWAYS use LLM if available, with tool data as context
+  const toolContext = formatToolContext(intent, toolResult);
+  const llmMessage = await generateResponse(message, role, toolContext);
 
   return {
-    message: responseMessage,
+    message: llmMessage,
     toolResult,
     intent,
+    suggestedActions: getSuggestedActions(intent, role, toolResult),
   };
+}
+
+/**
+ * Format tool result data into a context string for the LLM.
+ * This gives the LLM the real data so it can craft a tailored response.
+ */
+function formatToolContext(intent: IntentType, result: ToolResult): string {
+  const lines: string[] = [
+    `Tool: ${result.toolName}`,
+    `Success: ${result.success}`,
+    `Intent: ${intent}`,
+    `Raw result: ${result.message}`,
+  ];
+
+  // Include structured data so the LLM has the full picture
+  if (result.data && Object.keys(result.data).length > 0) {
+    lines.push(`Data: ${JSON.stringify(result.data, null, 2)}`);
+  }
+
+  lines.push('');
+  lines.push('Instructions: Use the above data to craft your response. Present the information naturally in your dispatcher persona. Do not say "according to the database" — just present the info directly. If the tool failed, let the user know and suggest alternatives.');
+
+  return lines.join('\n');
+}
+
+/**
+ * Return contextual follow-up suggestions based on what just happened.
+ */
+function getSuggestedActions(intent: IntentType, role: UserRole, toolResult?: ToolResult): string[] {
+  // For availability results, present time slots as booking chips
+  if (intent === 'check_plumber_availability' && toolResult?.success) {
+    const data = toolResult.data as Record<string, unknown>;
+    const openSlots = (data.openSlots || []) as string[];
+    if (openSlots.length > 0) {
+      const date = (data.date as string) || 'next available';
+      const slotChips = openSlots.slice(0, 3).map((time) => `Book ${date} at ${time}`);
+      slotChips.push('Check another date');
+      return slotChips;
+    }
+    return ['Check another date', 'I have a leak', 'Any plumbing tips?'];
+  }
+
+  // Lead capture: after reporting issues, nudge toward booking
+  const leadCapture: Record<string, string[]> = {
+    create_ticket: ['Check availability for next Tuesday', 'Show my tickets', 'Any plumbing tips?'],
+    create_service_ticket: ['Check availability for next Tuesday', 'Show my tickets', 'Any plumbing tips?'],
+  };
+
+  const base: Record<string, string[]> = {
+    ...leadCapture,
+    query_tickets: ['I have a leak', 'Check availability for next Tuesday', 'Schedule a visit'],
+    get_ticket_detail: ['Show my tickets', 'Schedule a visit'],
+    schedule_appointment: ['Show my appointments', 'Any plumbing tips?'],
+    query_appointments: ['Schedule a visit', 'Check availability for next Tuesday', 'Show my tickets'],
+    get_newsletter: ['I have a leak', 'Schedule maintenance', 'When should I call a plumber?'],
+    get_newsletter_advice: ['I have a leak', 'Schedule maintenance', 'When should I call a plumber?'],
+    manage_users: ['Show all tickets', 'Show business metrics', 'Show all appointments'],
+    generate_business_metrics: ['Show all tickets', 'Summarize user problems', 'Show all appointments'],
+    summarize_ticket_problems: ['Show all tickets', 'Show business metrics', 'Show all users'],
+    suggest_ticket_response: ['Summarize user problems', 'Show all tickets', 'Show business metrics'],
+    general_help: [],
+  };
+
+  const suggestions = [...(base[intent] || [])];
+
+  // Admin extras
+  if (role === 'admin' && !suggestions.includes('Show business metrics') && intent !== 'generate_business_metrics') {
+    suggestions.push('Show business metrics');
+  }
+
+  return suggestions.slice(0, 4);
 }
 
 /**
@@ -450,10 +610,21 @@ function buildResponseMessage(intent: IntentType, result: ToolResult): string {
   switch (intent) {
     // ── New MCP tools ──
     case 'get_newsletter_advice':
+      // Add value: tie in scheduling nudge
+      return `${result.message}\n\n${getLeadCaptureNudge()}`;
+
     case 'create_service_ticket':
+      // Lead capture: nudge toward booking after ticket creation
+      return `${result.message}${getLeadCaptureNudge()}\n\n${getNewsletterTieIn('general')}`;
+
     case 'check_plumber_availability':
+      // Present availability clearly — chips handle booking
+      return result.message;
+
     case 'generate_business_metrics':
-      // These tools produce their own rich messages
+    case 'summarize_ticket_problems':
+    case 'suggest_ticket_response':
+      // Admin tools: pass through rich messages
       return result.message;
 
     // ── Legacy tools ──
@@ -472,7 +643,7 @@ function buildResponseMessage(intent: IntentType, result: ToolResult): string {
     }
 
     case 'create_ticket':
-      return `${result.message}\n\nOur team will review your issue and get back to you shortly.`;
+      return `${result.message}\n\nOur team will review your issue shortly.${getLeadCaptureNudge()}\n\n${getNewsletterTieIn('general')}`;
 
     case 'query_appointments': {
       const items = Array.isArray(result.data) ? result.data : [];
@@ -484,7 +655,7 @@ function buildResponseMessage(intent: IntentType, result: ToolResult): string {
     }
 
     case 'schedule_appointment':
-      return `${result.message}\n\nWe'll send a confirmation once a technician is assigned.`;
+      return `${result.message}\n\n✅ We'll send a confirmation once a technician is assigned.\n\n${getNewsletterTieIn('maintenance')}`;
 
     case 'get_newsletter': {
       const items = Array.isArray(result.data) ? result.data : [];
@@ -509,37 +680,5 @@ function buildResponseMessage(intent: IntentType, result: ToolResult): string {
   }
 }
 
-/**
- * Generate a context-aware help message based on the user's role.
- */
-function getHelpMessage(role: UserRole): string {
-  const base = `👋 **Welcome to Pipe Dream Plumbing Virtual Assistant!**\n\nI can help you with the following:\n`;
 
-  const features = {
-    anon: [
-      '📰 **Get plumbing advice** — Try: "Any plumbing tips?"',
-      '❓ **Browse FAQs** — Try: "When should I call a plumber?"',
-      '\n💡 *Sign in to submit tickets, check availability, and book appointments!*',
-    ],
-    authenticated: [
-      '📰 **Get plumbing advice** — Try: "Any plumbing tips?"',
-      '🎫 **Submit a service ticket** — Try: "I need service for a leaking faucet"',
-      '📋 **View your tickets** — Try: "Show my tickets"',
-      '📅 **Check availability** — Try: "Check availability for next Tuesday"',
-      '📅 **Book appointments** — Try: "Schedule an appointment for Tuesday"',
-      '📅 **View appointments** — Try: "Show my appointments"',
-    ],
-    admin: [
-      '📰 **Get plumbing advice** — Try: "Any plumbing tips?"',
-      '🎫 **Manage all tickets** — Try: "Show all tickets"',
-      '📅 **Check availability** — Try: "Check availability for next Monday"',
-      '📅 **Manage all appointments** — Try: "Show all appointments"',
-      '👥 **Manage users** — Try: "Show all users"',
-      '📊 **Business metrics** — Try: "Show business metrics"',
-      '...plus everything available to authenticated users',
-    ],
-  };
-
-  return base + features[role].join('\n');
-}
 
