@@ -66,6 +66,12 @@ sqlite.exec(`
     published_at TEXT NOT NULL,
     is_active INTEGER NOT NULL DEFAULT 1
   );
+
+  -- Seed default users so foreign key constraints pass when booking
+  INSERT OR IGNORE INTO users (id, name, email, role, phone, created_at) VALUES 
+    ('user_anon', 'Guest User', 'guest@example.com', 'anon', '555-0000', datetime('now')),
+    ('user_auth', 'Customer John', 'john@example.com', 'authenticated', '555-1234', datetime('now')),
+    ('user_admin', 'Admin Operator', 'admin@example.com', 'admin', '555-9999', datetime('now'));
 `);
 
 export const db = drizzle(sqlite, { schema });
