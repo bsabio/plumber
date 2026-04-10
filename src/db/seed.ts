@@ -24,12 +24,14 @@ sqlite.exec(`
     email TEXT NOT NULL UNIQUE,
     role TEXT NOT NULL DEFAULT 'anon',
     phone TEXT,
+    specialty TEXT,
     created_at TEXT NOT NULL
   );
 
   CREATE TABLE IF NOT EXISTS tickets (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id),
+    technician_id TEXT REFERENCES users(id),
     subject TEXT NOT NULL,
     description TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'open',
@@ -41,6 +43,7 @@ sqlite.exec(`
   CREATE TABLE IF NOT EXISTS appointments (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id),
+    technician_id TEXT REFERENCES users(id),
     date TEXT NOT NULL,
     time TEXT NOT NULL,
     service_type TEXT NOT NULL,
@@ -60,6 +63,11 @@ sqlite.exec(`
   );
 `);
 
+// ── Add new columns if they don't exist (safe migration) ──
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN specialty TEXT`); } catch { /* already exists */ }
+try { sqlite.exec(`ALTER TABLE tickets ADD COLUMN technician_id TEXT REFERENCES users(id)`); } catch { /* already exists */ }
+try { sqlite.exec(`ALTER TABLE appointments ADD COLUMN technician_id TEXT REFERENCES users(id)`); } catch { /* already exists */ }
+
 // ── Seed Data ──
 const now = new Date().toISOString();
 
@@ -67,6 +75,9 @@ const now = new Date().toISOString();
 const adminId = uuidv4();
 const authUserId = uuidv4();
 const anonUserId = uuidv4();
+const techJoeId = uuidv4();
+const techDanId = uuidv4();
+const techMariaId = uuidv4();
 
 const seedUsers = [
   {
@@ -75,6 +86,7 @@ const seedUsers = [
     email: 'mike@pipedreamsplumbing.com',
     role: 'admin' as const,
     phone: '555-0100',
+    specialty: null,
     createdAt: now,
   },
   {
@@ -83,6 +95,7 @@ const seedUsers = [
     email: 'sarah.w@email.com',
     role: 'authenticated' as const,
     phone: '555-0201',
+    specialty: null,
     createdAt: now,
   },
   {
@@ -91,6 +104,35 @@ const seedUsers = [
     email: 'guest@example.com',
     role: 'anon' as const,
     phone: null,
+    specialty: null,
+    createdAt: now,
+  },
+  // ── Technicians ──
+  {
+    id: techJoeId,
+    name: 'Joe Ramirez',
+    email: 'joe@pipedreamsplumbing.com',
+    role: 'technician' as const,
+    phone: '555-0301',
+    specialty: 'repair',
+    createdAt: now,
+  },
+  {
+    id: techDanId,
+    name: 'Dan Kowalski',
+    email: 'dan@pipedreamsplumbing.com',
+    role: 'technician' as const,
+    phone: '555-0302',
+    specialty: 'drain',
+    createdAt: now,
+  },
+  {
+    id: techMariaId,
+    name: 'Maria Santos',
+    email: 'maria@pipedreamsplumbing.com',
+    role: 'technician' as const,
+    phone: '555-0303',
+    specialty: 'installation',
     createdAt: now,
   },
 ];
@@ -100,6 +142,7 @@ const seedTickets = [
   {
     id: uuidv4(),
     userId: authUserId,
+    technicianId: techJoeId,
     subject: 'Leaking kitchen faucet',
     description:
       'The kitchen faucet has been dripping steadily for 2 days. It seems to be coming from the base of the handle.',
@@ -111,6 +154,7 @@ const seedTickets = [
   {
     id: uuidv4(),
     userId: authUserId,
+    technicianId: techDanId,
     subject: 'Water heater not heating',
     description:
       'Our 40-gallon water heater stopped producing hot water yesterday evening. The pilot light appears to be out.',
@@ -122,6 +166,7 @@ const seedTickets = [
   {
     id: uuidv4(),
     userId: adminId,
+    technicianId: null,
     subject: 'Bathroom drain clogged',
     description:
       'The master bathroom shower drain is completely blocked. Water pools up within 2 minutes of running the shower.',
@@ -137,6 +182,7 @@ const seedAppointments = [
   {
     id: uuidv4(),
     userId: authUserId,
+    technicianId: techJoeId,
     date: '2026-03-18',
     time: '09:00',
     serviceType: 'repair' as const,
@@ -148,6 +194,7 @@ const seedAppointments = [
   {
     id: uuidv4(),
     userId: authUserId,
+    technicianId: techDanId,
     date: '2026-03-20',
     time: '14:00',
     serviceType: 'inspection' as const,
@@ -159,6 +206,7 @@ const seedAppointments = [
   {
     id: uuidv4(),
     userId: adminId,
+    technicianId: techMariaId,
     date: '2026-03-25',
     time: '10:30',
     serviceType: 'installation' as const,

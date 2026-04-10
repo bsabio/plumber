@@ -25,6 +25,8 @@ export {
   summarizeTicketProblems,
   suggestTicketResponse,
   updateTicketStatus,
+  assignTechnician,
+  getTechnicians,
   MCP_TOOL_DEFINITIONS,
   // Zod schemas (for external consumers)
   GetNewsletterAdviceInputSchema,
@@ -34,6 +36,7 @@ export {
   SummarizeTicketProblemsInputSchema,
   SuggestTicketResponseInputSchema,
   UpdateTicketStatusInputSchema,
+  AssignTechnicianInputSchema,
 } from './mcp-tools';
 
 // Re-export resources
@@ -137,6 +140,13 @@ export const TOOL_REGISTRY = [
     description: 'Updates the status of an existing ticket (open, in_progress, resolved, closed).',
     roles: ['authenticated', 'admin'],
     parameters: ['ticketId', 'newStatus'],
+    validated: true,
+  },
+  {
+    name: 'assign_technician',
+    description: '(Admin Only) Assigns a technician to a ticket. Validates both ticket and technician exist.',
+    roles: ['admin'],
+    parameters: ['ticketId', 'technicianId'],
     validated: true,
   },
 ] as const;

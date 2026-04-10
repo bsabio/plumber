@@ -24,6 +24,8 @@ import {
   summarizeTicketProblems,
   suggestTicketResponse,
   updateTicketStatus,
+  assignTechnician,
+  getTechnicians,
 } from '@/mcp-server/mcp-tools';
 import { db } from '@/db';
 import { users } from '@/db/schema';
@@ -93,6 +95,15 @@ const INTENT_PATTERNS: { intent: IntentType; keywords: string[] }[] = [
       'set ticket status', 'update status',
       'mark as resolved', 'mark as closed', 'mark as in progress',
       'mark it as', 'set to resolved', 'set to closed', 'set to open',
+    ],
+  },
+  {
+    intent: 'assign_technician',
+    keywords: [
+      'assign technician', 'assign to', 'dispatch technician',
+      'send technician', 'who should handle', 'assign ticket',
+      'assign joe', 'assign dan', 'assign maria',
+      'dispatch to', 'send to technician',
     ],
   },
   // ── Legacy tools ──
@@ -169,6 +180,12 @@ function classifyIntent(message: string): IntentType {
     const statusWords = /\b(resolve|resolved|close|closed|reopen|reopened|mark|update|in.progress|complete|done|fixed)\b/;
     if (statusWords.test(lowerMsg)) {
       return 'update_ticket_status';
+    }
+    // UUID + technician-name heuristic
+    const assignWords = /\b(assign|dispatch|send|give|allocate)\b/;
+    const techNames = /\b(joe|dan|maria|ramirez|kowalski|santos|technician)\b/;
+    if (assignWords.test(lowerMsg) || techNames.test(lowerMsg)) {
+      return 'assign_technician';
     }
   }
 
@@ -476,6 +493,48 @@ export async function mediate(
       break;
     }
 
+    case 'assign_technician': {
+      // Extract ticket UUID from message
+      const uuidMatch = message.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+
+      if (!uuidMatch) {
+        toolResult = {
+          toolName: 'assign_technician',
+          success: false,
+          data: {},
+          message: 'Please provide the ticket ID (UUID) and specify which technician to assign. Example: "Assign ticket [UUID] to Joe"',
+        };
+        break;
+      }
+
+      // Resolve technician by name from the message
+      const technicians = getTechnicians();
+      const lowerMsg = message.toLowerCase();
+      const matched = technicians.find((t) =>
+        lowerMsg.includes(t.name.split(' ')[0].toLowerCase()) ||
+        lowerMsg.includes(t.name.toLowerCase())
+      );
+
+      if (!matched) {
+        const techList = technicians
+          .map((t) => `• **${t.name}** (${t.specialty ?? 'General'}) — ID: \`${t.id}\``)
+          .join('\n');
+        toolResult = {
+          toolName: 'assign_technician',
+          success: false,
+          data: { technicians },
+          message: `Please specify which technician to assign. Available technicians:\n\n${techList}`,
+        };
+        break;
+      }
+
+      toolResult = await assignTechnician({
+        ticketId: uuidMatch[0],
+        technicianId: matched.id,
+      });
+      break;
+    }
+
     // ── Legacy tools ──
 
     case 'query_tickets':
@@ -677,6 +736,7 @@ function getSuggestedActions(intent: IntentType, role: UserRole, toolResult?: To
     summarize_ticket_problems: ['Show all tickets', 'Show business metrics', 'Show all users'],
     suggest_ticket_response: ['Summarize user problems', 'Show all tickets', 'Show business metrics'],
     update_ticket_status: ['Show my tickets', 'Show all tickets', 'Show business metrics'],
+    assign_technician: ['Show all tickets', 'Show business metrics', 'Check availability'],
     general_help: [],
   };
 
@@ -737,6 +797,9 @@ function buildResponseMessage(intent: IntentType, result: ToolResult): string {
       return `${result.message}\n\nOur team will review your issue shortly.${getLeadCaptureNudge()}\n\n${getNewsletterTieIn('general')}`;
 
     case 'update_ticket_status':
+      return result.message;
+
+    case 'assign_technician':
       return result.message;
 
     case 'query_appointments': {

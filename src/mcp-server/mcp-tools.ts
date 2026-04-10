@@ -9,7 +9,7 @@
 
 import { z } from 'zod';
 import { db } from '@/db';
-import { tickets, appointments, newsletterContent } from '@/db/schema';
+import { tickets, appointments, newsletterContent, users } from '@/db/schema';
 import { eq, desc, and, ne, gte, sql } from 'drizzle-orm';
 import { v4 as uuidv4 } from 'uuid';
 import type { ToolResult } from '@/lib/types';
@@ -1024,6 +1024,163 @@ export async function updateTicketStatus(
 
 
 // ═══════════════════════════════════════════════════════════════
+//  8. assign_technician  (SPRINT-003)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Input schema — strict Zod validation for assign_technician.
+ *
+ * @field ticketId      - UUID of the ticket to assign
+ * @field technicianId  - UUID of the technician user to assign
+ */
+export const AssignTechnicianInputSchema = z.object({
+  ticketId: z
+    .string()
+    .trim()
+    .regex(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+      'ticketId must be a valid UUID'
+    )
+    .describe('The UUID of the ticket to assign'),
+  technicianId: z
+    .string()
+    .trim()
+    .regex(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+      'technicianId must be a valid UUID'
+    )
+    .describe('The UUID of the technician user to assign to the ticket'),
+});
+
+export type AssignTechnicianInput = z.infer<typeof AssignTechnicianInputSchema>;
+
+/**
+ * Helper — returns all users with role = 'technician'.
+ * Used by assign_technician and check_plumber_availability.
+ */
+export function getTechnicians() {
+  return db
+    .select()
+    .from(users)
+    .where(eq(users.role, 'technician'))
+    .all();
+}
+
+/**
+ * assign_technician
+ * Assigns a technician to a ticket by updating the technicianId column.
+ * Validates that both the ticket and the technician user exist.
+ *
+ * Roles: admin
+ */
+export async function assignTechnician(
+  rawInput: unknown
+): Promise<ToolResult> {
+  // ── Validate input ──
+  const parsed = AssignTechnicianInputSchema.safeParse(rawInput);
+  if (!parsed.success) {
+    return {
+      toolName: 'assign_technician',
+      success: false,
+      data: { validationErrors: parsed.error.flatten().fieldErrors },
+      message: `❌ Invalid input: ${parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`,
+    };
+  }
+
+  const { ticketId, technicianId } = parsed.data;
+
+  try {
+    // Verify ticket exists
+    const ticket = db
+      .select()
+      .from(tickets)
+      .where(eq(tickets.id, ticketId))
+      .get();
+
+    if (!ticket) {
+      return {
+        toolName: 'assign_technician',
+        success: false,
+        data: {},
+        message: `❌ Ticket not found: \`${ticketId}\``,
+      };
+    }
+
+    // Verify technician exists and has the technician role
+    const technician = db
+      .select()
+      .from(users)
+      .where(and(eq(users.id, technicianId), eq(users.role, 'technician')))
+      .get();
+
+    if (!technician) {
+      return {
+        toolName: 'assign_technician',
+        success: false,
+        data: {},
+        message: `❌ Technician not found: \`${technicianId}\`. Make sure the user exists and has the 'technician' role.`,
+      };
+    }
+
+    // Check if already assigned to the same technician
+    if (ticket.technicianId === technicianId) {
+      return {
+        toolName: 'assign_technician',
+        success: true,
+        data: {
+          ticketId: ticket.id,
+          technicianId,
+          technicianName: technician.name,
+          note: 'Already assigned to this technician.',
+        },
+        message: `ℹ️ Ticket "${ticket.subject}" is already assigned to **${technician.name}**. No change needed.`,
+      };
+    }
+
+    // Perform the assignment
+    const now = new Date().toISOString();
+    db.update(tickets)
+      .set({ technicianId, updatedAt: now })
+      .where(eq(tickets.id, ticketId))
+      .run();
+
+    // Auto-progress status to in_progress if it's still open
+    let statusNote = '';
+    if (ticket.status === 'open') {
+      db.update(tickets)
+        .set({ status: 'in_progress', updatedAt: now })
+        .where(eq(tickets.id, ticketId))
+        .run();
+      statusNote = ' Status auto-updated to **in_progress**.';
+    }
+
+    return {
+      toolName: 'assign_technician',
+      success: true,
+      data: {
+        ticketId: ticket.id,
+        subject: ticket.subject,
+        technicianId,
+        technicianName: technician.name,
+        technicianSpecialty: technician.specialty,
+        technicianPhone: technician.phone,
+        previousTechnicianId: ticket.technicianId ?? null,
+        updatedAt: now,
+      },
+      message: `✅ Ticket "${ticket.subject}" assigned to **${technician.name}** (${technician.specialty ?? 'General'}).${statusNote}`,
+    };
+  } catch (error) {
+    return {
+      toolName: 'assign_technician',
+      success: false,
+      data: {},
+      message: `Error assigning technician: ${(error as Error).message}`,
+    };
+  }
+}
+
+
+// ═══════════════════════════════════════════════════════════════
 //  MCP Tool Definitions — for server registration
 // ═══════════════════════════════════════════════════════════════
 
@@ -1083,5 +1240,13 @@ export const MCP_TOOL_DEFINITIONS = [
     inputSchema: UpdateTicketStatusInputSchema,
     roles: ['authenticated', 'admin'] as const,
     handler: updateTicketStatus,
+  },
+  {
+    name: 'assign_technician',
+    description:
+      '(Admin Only) Assigns a technician to a ticket. Validates both ticket and technician exist.',
+    inputSchema: AssignTechnicianInputSchema,
+    roles: ['admin'] as const,
+    handler: assignTechnician,
   },
 ] as const;

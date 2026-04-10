@@ -5,10 +5,11 @@ export const users = sqliteTable('users', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   email: text('email').notNull().unique(),
-  role: text('role', { enum: ['anon', 'authenticated', 'admin'] })
+  role: text('role', { enum: ['anon', 'authenticated', 'admin', 'technician'] })
     .notNull()
     .default('anon'),
   phone: text('phone'),
+  specialty: text('specialty'), // e.g. 'drain', 'installation', 'emergency'
   createdAt: text('created_at')
     .notNull()
     .$defaultFn(() => new Date().toISOString()),
@@ -20,6 +21,7 @@ export const tickets = sqliteTable('tickets', {
   userId: text('user_id')
     .notNull()
     .references(() => users.id),
+  technicianId: text('technician_id').references(() => users.id), // nullable
   subject: text('subject').notNull(),
   description: text('description').notNull(),
   status: text('status', {
@@ -44,6 +46,7 @@ export const appointments = sqliteTable('appointments', {
   userId: text('user_id')
     .notNull()
     .references(() => users.id),
+  technicianId: text('technician_id').references(() => users.id), // nullable
   date: text('date').notNull(),
   time: text('time').notNull(),
   serviceType: text('service_type', {

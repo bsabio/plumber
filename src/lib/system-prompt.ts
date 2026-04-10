@@ -53,6 +53,12 @@ export function getWelcomeMessage(role: UserRole): string {
         `pull business metrics, or manage scheduling.\n\n` +
         `What do you need?`
       );
+    case 'technician':
+      return (
+        `🔧 **Pipe Dream Dispatch** — Tech Portal ready.\n\n` +
+        `I can show your assigned tickets, check the schedule, and update ticket statuses.\n\n` +
+        `What do you need?`
+      );
   }
 }
 
@@ -79,6 +85,12 @@ export function getDefaultSuggestions(role: UserRole): string[] {
         'Show all tickets',
         'Check availability for next Monday',
       ];
+    case 'technician':
+      return [
+        'Show my tickets',
+        'Show all tickets',
+        'Check availability for next Monday',
+      ];
   }
 }
 
@@ -102,6 +114,12 @@ export function getHelpMessage(role: UserRole): string {
         `⚡ **Operator Tools Ready.**\n\n` +
         `I can summarize user problems, draft responses, pull metrics, or manage the schedule.\n\n` +
         `How would you like to proceed?`
+      );
+    case 'technician':
+      return (
+        `🔧 **Tech Portal.**\n\n` +
+        `Check your assigned tickets, update statuses, or check the schedule.\n\n` +
+        `What do you need?`
       );
   }
 }
@@ -185,6 +203,7 @@ export function getSystemInstruction(role: UserRole): string {
     anon: 'The user is an anonymous guest (not logged in). Your primary goal is lead capture: find out their plumbing problem, offer helpful advice, and encourage them to create an account to book a technician.',
     authenticated: 'The user is a logged-in customer. You can help them report problems, check availability, book technicians, and view their tickets. Guide them toward scheduling a visit.',
     admin: 'The user is an admin/operator. You can help with ticket summaries, drafting customer responses, reviewing business metrics, and managing the schedule. Be efficient and data-driven.',
+    technician: 'The user is a field technician. Help them view their assigned tickets, check schedules, and update ticket statuses. Be concise and practical.',
   };
 
   return [

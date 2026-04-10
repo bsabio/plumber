@@ -1,6 +1,6 @@
 // ── Shared Types for the Virtual Employee System ──
 
-export type UserRole = 'anon' | 'authenticated' | 'admin';
+export type UserRole = 'anon' | 'authenticated' | 'admin' | 'technician';
 
 export type IntentType =
   | 'query_tickets'
@@ -17,6 +17,7 @@ export type IntentType =
   | 'summarize_ticket_problems'
   | 'suggest_ticket_response'
   | 'update_ticket_status'
+  | 'assign_technician'
   | 'general_help';
 
 export interface ChatMessage {
@@ -79,5 +80,16 @@ export const ROLE_PERMISSIONS: Record<UserRole, IntentType[]> = {
     'generate_business_metrics',
     'summarize_ticket_problems',
     'suggest_ticket_response',
+    'assign_technician',
+  ],
+  technician: [
+    'get_newsletter',
+    'get_newsletter_advice',
+    'general_help',
+    'query_tickets',
+    'get_ticket_detail',
+    'query_appointments',
+    'check_plumber_availability',
+    'update_ticket_status',
   ],
 };

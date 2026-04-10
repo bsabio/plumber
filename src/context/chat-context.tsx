@@ -46,6 +46,12 @@ function getDefaultSuggestions(role: UserRole): string[] {
         'Show all tickets',
         'Check availability for next Monday',
       ];
+    case 'technician':
+      return [
+        'Show my tickets',
+        'Show all tickets',
+        'Check availability for next Monday',
+      ];
   }
 }
 
@@ -71,6 +77,12 @@ function getWelcomeMessage(role: UserRole): string {
         '⚡ **Operator Cockpit** — Dispatch ready.\n\n' +
         'You\'ve got full access. I can summarize open problems, draft customer responses, ' +
         'pull business metrics, or manage scheduling.\n\n' +
+        'What do you need?'
+      );
+    case 'technician':
+      return (
+        '🔧 **Pipe Dream Dispatch** — Tech Portal ready.\n\n' +
+        'I can show your assigned tickets, check the schedule, and update ticket statuses.\n\n' +
         'What do you need?'
       );
   }
