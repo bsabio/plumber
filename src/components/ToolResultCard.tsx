@@ -36,6 +36,7 @@ export default function ToolResultCard({ result }: ToolResultCardProps) {
     case 'create_ticket':
     case 'schedule_appointment':
     case 'create_service_ticket':
+    case 'update_ticket_status':
       return <SuccessCard result={result} />;
     case 'get_ticket_detail':
       return <DetailCard item={items[0]} />;

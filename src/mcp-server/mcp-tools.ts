@@ -909,6 +909,121 @@ function getSuggestedResponseText(issueType: string, subject: string, descriptio
 
 
 // ═══════════════════════════════════════════════════════════════
+//  7. update_ticket_status  (SPRINT-002)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Input schema — strict Zod validation for update_ticket_status.
+ *
+ * @field ticketId  - UUID of the ticket to update
+ * @field newStatus - The status to transition the ticket to
+ */
+export const UpdateTicketStatusInputSchema = z.object({
+  ticketId: z
+    .string()
+    .trim()
+    .regex(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+      'ticketId must be a valid UUID'
+    )
+    .describe('The UUID of the ticket to update'),
+  newStatus: z
+    .enum(['open', 'in_progress', 'resolved', 'closed'], {
+      error: 'Status must be one of: open, in_progress, resolved, closed',
+    })
+    .describe('The new status to set on the ticket'),
+});
+
+export type UpdateTicketStatusInput = z.infer<typeof UpdateTicketStatusInputSchema>;
+
+/**
+ * update_ticket_status
+ * Updates the status of an existing ticket in the database.
+ * Validates the ticket exists before updating and records the timestamp.
+ *
+ * Roles: authenticated, admin
+ */
+export async function updateTicketStatus(
+  rawInput: unknown
+): Promise<ToolResult> {
+  // ── Validate input ──
+  const parsed = UpdateTicketStatusInputSchema.safeParse(rawInput);
+  if (!parsed.success) {
+    return {
+      toolName: 'update_ticket_status',
+      success: false,
+      data: { validationErrors: parsed.error.flatten().fieldErrors },
+      message: `❌ Invalid input: ${parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`,
+    };
+  }
+
+  const { ticketId, newStatus } = parsed.data;
+
+  try {
+    // Check ticket exists
+    const existing = db
+      .select()
+      .from(tickets)
+      .where(eq(tickets.id, ticketId))
+      .get();
+
+    if (!existing) {
+      return {
+        toolName: 'update_ticket_status',
+        success: false,
+        data: {},
+        message: `❌ Ticket with ID "${ticketId.slice(0, 8)}..." not found.`,
+      };
+    }
+
+    const previousStatus = existing.status;
+
+    // Prevent no-op updates
+    if (previousStatus === newStatus) {
+      return {
+        toolName: 'update_ticket_status',
+        success: true,
+        data: {
+          ticketId: existing.id,
+          subject: existing.subject,
+          status: newStatus,
+          note: 'No change — ticket is already in this status.',
+        },
+        message: `ℹ️ Ticket "${existing.subject}" is already **${newStatus}**. No update needed.`,
+      };
+    }
+
+    // Perform the update
+    const now = new Date().toISOString();
+    db.update(tickets)
+      .set({ status: newStatus, updatedAt: now })
+      .where(eq(tickets.id, ticketId))
+      .run();
+
+    return {
+      toolName: 'update_ticket_status',
+      success: true,
+      data: {
+        ticketId: existing.id,
+        subject: existing.subject,
+        previousStatus,
+        newStatus,
+        updatedAt: now,
+      },
+      message: `✅ Ticket "${existing.subject}" updated: **${previousStatus}** → **${newStatus}**`,
+    };
+  } catch (error) {
+    return {
+      toolName: 'update_ticket_status',
+      success: false,
+      data: {},
+      message: `Error updating ticket status: ${(error as Error).message}`,
+    };
+  }
+}
+
+
+// ═══════════════════════════════════════════════════════════════
 //  MCP Tool Definitions — for server registration
 // ═══════════════════════════════════════════════════════════════
 
@@ -960,5 +1075,13 @@ export const MCP_TOOL_DEFINITIONS = [
     inputSchema: SuggestTicketResponseInputSchema,
     roles: ['admin'] as const,
     handler: suggestTicketResponse,
+  },
+  {
+    name: 'update_ticket_status',
+    description:
+      'Updates the status of an existing ticket (open, in_progress, resolved, closed). Validates ticket exists before updating.',
+    inputSchema: UpdateTicketStatusInputSchema,
+    roles: ['authenticated', 'admin'] as const,
+    handler: updateTicketStatus,
   },
 ] as const;

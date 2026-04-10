@@ -16,6 +16,7 @@ export type IntentType =
   | 'generate_business_metrics'
   | 'summarize_ticket_problems'
   | 'suggest_ticket_response'
+  | 'update_ticket_status'
   | 'general_help';
 
 export interface ChatMessage {
@@ -60,6 +61,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, IntentType[]> = {
     'query_appointments',
     'schedule_appointment',
     'check_plumber_availability',
+    'update_ticket_status',
   ],
   admin: [
     'get_newsletter',
@@ -72,6 +74,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, IntentType[]> = {
     'query_appointments',
     'schedule_appointment',
     'check_plumber_availability',
+    'update_ticket_status',
     'manage_users',
     'generate_business_metrics',
     'summarize_ticket_problems',

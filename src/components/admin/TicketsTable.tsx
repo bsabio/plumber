@@ -59,6 +59,33 @@ const PRIORITY_EMOJI: Record<string, string> = {
   urgent: '🔴',
 };
 
+/** Returns the status transitions available from the current status. */
+function getStatusActions(current: Ticket['status']): { label: string; value: Ticket['status']; style: string }[] {
+  switch (current) {
+    case 'open':
+      return [
+        { label: '▶ In Progress', value: 'in_progress', style: 'bg-yellow-500/20 text-yellow-300 hover:bg-yellow-500/40' },
+        { label: '✓ Resolve', value: 'resolved', style: 'bg-blue-500/20 text-blue-300 hover:bg-blue-500/40' },
+        { label: '✕ Close', value: 'closed', style: 'bg-gray-500/20 text-gray-300 hover:bg-gray-500/40' },
+      ];
+    case 'in_progress':
+      return [
+        { label: '✓ Resolve', value: 'resolved', style: 'bg-blue-500/20 text-blue-300 hover:bg-blue-500/40' },
+        { label: '✕ Close', value: 'closed', style: 'bg-gray-500/20 text-gray-300 hover:bg-gray-500/40' },
+        { label: '↩ Reopen', value: 'open', style: 'bg-green-500/20 text-green-300 hover:bg-green-500/40' },
+      ];
+    case 'resolved':
+      return [
+        { label: '✕ Close', value: 'closed', style: 'bg-gray-500/20 text-gray-300 hover:bg-gray-500/40' },
+        { label: '↩ Reopen', value: 'open', style: 'bg-green-500/20 text-green-300 hover:bg-green-500/40' },
+      ];
+    case 'closed':
+      return [
+        { label: '↩ Reopen', value: 'open', style: 'bg-green-500/20 text-green-300 hover:bg-green-500/40' },
+      ];
+  }
+}
+
 interface TicketsTableProps {
   onTicketClick?: (ticket: Ticket) => void;
 }
@@ -68,6 +95,8 @@ export default function TicketsTable({ onTicketClick }: TicketsTableProps) {
   const [statusFilter, setStatusFilter] = useState('');
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
 
   const fetchTickets = useCallback(async () => {
     setLoading(true);
@@ -90,8 +119,33 @@ export default function TicketsTable({ onTicketClick }: TicketsTableProps) {
   }, [fetchTickets]);
 
   const handleRowClick = (ticket: Ticket) => {
-    setSelectedId(ticket.id);
+    setSelectedId((prev) => (prev === ticket.id ? null : ticket.id));
     onTicketClick?.(ticket);
+  };
+
+  const handleStatusUpdate = async (ticketId: string, newStatus: Ticket['status']) => {
+    setUpdatingId(ticketId);
+    try {
+      const res = await fetch('/api/admin/tickets', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticketId, newStatus }),
+      });
+      if (res.ok) {
+        // Optimistically update the local state
+        setTickets((prev) =>
+          prev.map((t) =>
+            t.id === ticketId
+              ? { ...t, status: newStatus, updatedAt: new Date().toISOString() }
+              : t
+          )
+        );
+      }
+    } catch {
+      console.error('Failed to update ticket status');
+    } finally {
+      setUpdatingId(null);
+    }
   };
 
   return (
@@ -133,7 +187,7 @@ export default function TicketsTable({ onTicketClick }: TicketsTableProps) {
           ))}
         </div>
       </CardHeader>
-      <CardContent className="flex-1 px-0 pb-0">
+      <CardContent className="flex-1 px-0 pb-0 overflow-hidden">
         <ScrollArea className="h-[calc(100%-0px)] custom-scrollbar">
           {loading ? (
             <div className="flex items-center justify-center p-8">
@@ -146,11 +200,14 @@ export default function TicketsTable({ onTicketClick }: TicketsTableProps) {
           ) : (
             <div className="divide-y divide-border/20">
               {tickets.map((ticket) => (
-                <button
+                <div
                   key={ticket.id}
+                  role="button"
+                  tabIndex={0}
                   onClick={() => handleRowClick(ticket)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleRowClick(ticket); }}
                   className={cn(
-                    'w-full text-left px-4 py-3 transition-all hover:bg-accent/30',
+                    'w-full text-left px-4 py-3 transition-all hover:bg-accent/30 cursor-pointer',
                     selectedId === ticket.id && 'bg-primary/10 border-l-2 border-l-primary',
                   )}
                 >
@@ -170,10 +227,72 @@ export default function TicketsTable({ onTicketClick }: TicketsTableProps) {
                       </Badge>
                     </div>
                   </div>
-                  <p className="text-[10px] text-muted-foreground/60 mt-1">
-                    {new Date(ticket.createdAt).toLocaleDateString()}
-                  </p>
-                </button>
+                  <div className="flex items-center gap-2 mt-1">
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigator.clipboard.writeText(ticket.id);
+                          setCopiedId(ticket.id);
+                          setTimeout(() => setCopiedId(null), 1500);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.stopPropagation();
+                            navigator.clipboard.writeText(ticket.id);
+                            setCopiedId(ticket.id);
+                            setTimeout(() => setCopiedId(null), 1500);
+                          }
+                        }}
+                        className="group/copy inline-flex items-center gap-1 text-[10px] font-mono text-muted-foreground/80 bg-secondary/40 hover:bg-secondary/70 px-1.5 py-0.5 rounded cursor-pointer transition-colors"
+                        title="Click to copy ticket ID"
+                      >
+                        {copiedId === ticket.id ? (
+                          <span className="text-green-400">✓ Copied!</span>
+                        ) : (
+                          <>
+                            <span>📋</span>
+                            <span>{ticket.id}</span>
+                          </>
+                        )}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground/60">
+                        {new Date(ticket.createdAt).toLocaleDateString()}
+                      </span>
+                    </div>
+
+                  {/* Status action buttons — show when row is selected */}
+                  {selectedId === ticket.id && (
+                    <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-border/20">
+                      <span className="text-[10px] text-muted-foreground/60 mr-1">Set status:</span>
+                      {getStatusActions(ticket.status).map((action) => (
+                        <span
+                          key={action.value}
+                          role="button"
+                          tabIndex={0}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleStatusUpdate(ticket.id, action.value);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.stopPropagation();
+                              handleStatusUpdate(ticket.id, action.value);
+                            }
+                          }}
+                          className={cn(
+                            'inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium cursor-pointer transition-all',
+                            updatingId === ticket.id ? 'opacity-50 pointer-events-none' : '',
+                            action.style,
+                          )}
+                        >
+                          {updatingId === ticket.id ? '...' : action.label}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
               ))}
             </div>
           )}

@@ -14,7 +14,7 @@ export default function RoleTestingFooter() {
   const { role, setRole } = useChatContext();
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-50 glass border-t border-border/40">
+    <div className="fixed bottom-0 left-0 right-0 z-40 glass border-t border-border/40">
       <div className="mx-auto flex h-12 max-w-xl items-center justify-center gap-1 px-4">
         <span className="mr-2 text-xs font-medium text-muted-foreground hidden sm:inline">
           Testing Role:

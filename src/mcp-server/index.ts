@@ -24,6 +24,7 @@ export {
   generateBusinessMetrics,
   summarizeTicketProblems,
   suggestTicketResponse,
+  updateTicketStatus,
   MCP_TOOL_DEFINITIONS,
   // Zod schemas (for external consumers)
   GetNewsletterAdviceInputSchema,
@@ -32,6 +33,7 @@ export {
   GenerateBusinessMetricsInputSchema,
   SummarizeTicketProblemsInputSchema,
   SuggestTicketResponseInputSchema,
+  UpdateTicketStatusInputSchema,
 } from './mcp-tools';
 
 // Re-export resources
@@ -128,6 +130,13 @@ export const TOOL_REGISTRY = [
     description: '(Admin Only) Takes a ticket subject and generates a suggested operator response.',
     roles: ['admin'],
     parameters: ['ticketSubject'],
+    validated: true,
+  },
+  {
+    name: 'update_ticket_status',
+    description: 'Updates the status of an existing ticket (open, in_progress, resolved, closed).',
+    roles: ['authenticated', 'admin'],
+    parameters: ['ticketId', 'newStatus'],
     validated: true,
   },
 ] as const;

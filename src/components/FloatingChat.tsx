@@ -82,10 +82,10 @@ export default function FloatingChat() {
       {/* Chat panel */}
       <SheetContent
         side="right"
-        className="w-full sm:w-[420px] p-0 flex flex-col bg-background border-l border-border/50"
+        className="w-full sm:w-[420px] p-0 flex flex-col overflow-hidden bg-background border-l border-border/50"
         showCloseButton={true}
       >
-        <SheetHeader className="p-4 pb-3 border-b border-border/30 glass">
+        <SheetHeader className="p-4 pb-3 border-b shrink-0 border-border/30 glass">
           <div className="flex items-center justify-between">
             <SheetTitle className="flex items-center gap-2 text-base">
               <span>🔧</span>
@@ -99,8 +99,8 @@ export default function FloatingChat() {
         </SheetHeader>
 
         {/* Messages */}
-        <ScrollArea className="flex-1 custom-scrollbar">
-          <div className="space-y-1 pb-4">
+        <ScrollArea className="flex-1 min-h-0 overflow-hidden custom-scrollbar">
+          <div className="space-y-1 px-4 pb-4">
             {messages.map((msg) => (
               <MessageBubble key={msg.id} message={msg} />
             ))}
@@ -123,12 +123,12 @@ export default function FloatingChat() {
         </ScrollArea>
 
         {/* Chips */}
-        <div className="py-2 px-2">
+        <div className="py-2 px-2 shrink-0">
           <SuggestionChips />
         </div>
 
         {/* Input */}
-        <div className="p-3 pt-0 border-t border-border/30">
+        <div className="p-3 pt-0 border-t border-border/30 shrink-0">
           <div className="flex gap-2">
             <Input
               ref={inputRef}

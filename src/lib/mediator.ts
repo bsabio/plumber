@@ -23,6 +23,7 @@ import {
   generateBusinessMetrics,
   summarizeTicketProblems,
   suggestTicketResponse,
+  updateTicketStatus,
 } from '@/mcp-server/mcp-tools';
 import { db } from '@/db';
 import { users } from '@/db/schema';
@@ -80,6 +81,18 @@ const INTENT_PATTERNS: { intent: IntentType; keywords: string[] }[] = [
       'plumbing advice', 'expert advice', 'plumbing tips',
       'newsletter advice', 'what do you recommend',
       'any tips', 'best practice',
+    ],
+  },
+  {
+    intent: 'update_ticket_status',
+    keywords: [
+      'update ticket', 'update this ticket', 'change status', 'mark ticket',
+      'close ticket', 'close this ticket',
+      'resolve ticket', 'resolve this ticket',
+      'reopen ticket', 'reopen this ticket',
+      'set ticket status', 'update status',
+      'mark as resolved', 'mark as closed', 'mark as in progress',
+      'mark it as', 'set to resolved', 'set to closed', 'set to open',
     ],
   },
   // ── Legacy tools ──
@@ -147,6 +160,17 @@ const INTENT_PATTERNS: { intent: IntentType; keywords: string[] }[] = [
  */
 function classifyIntent(message: string): IntentType {
   const lowerMsg = message.toLowerCase();
+
+  // ── UUID + status-word heuristic ──
+  // If the message contains a UUID and a status-related word, it's almost
+  // certainly an update_ticket_status request — catch it early.
+  const hasUUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(message);
+  if (hasUUID) {
+    const statusWords = /\b(resolve|resolved|close|closed|reopen|reopened|mark|update|in.progress|complete|done|fixed)\b/;
+    if (statusWords.test(lowerMsg)) {
+      return 'update_ticket_status';
+    }
+  }
 
   for (const pattern of INTENT_PATTERNS) {
     for (const keyword of pattern.keywords) {
@@ -419,6 +443,39 @@ export async function mediate(
       break;
     }
 
+    case 'update_ticket_status': {
+      // Extract ticket ID (UUID) from the message
+      const uuidMatch = message.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+
+      // Extract the desired status
+      const lower = message.toLowerCase();
+      let newStatus: 'open' | 'in_progress' | 'resolved' | 'closed' = 'resolved';
+      if (lower.includes('close') || lower.includes('closed')) {
+        newStatus = 'closed';
+      } else if (lower.includes('in progress') || lower.includes('in_progress') || lower.includes('working')) {
+        newStatus = 'in_progress';
+      } else if (lower.includes('reopen') || lower.includes('open')) {
+        newStatus = 'open';
+      } else if (lower.includes('resolve') || lower.includes('resolved') || lower.includes('done') || lower.includes('fixed')) {
+        newStatus = 'resolved';
+      }
+
+      if (!uuidMatch) {
+        toolResult = {
+          toolName: 'update_ticket_status',
+          success: false,
+          data: {},
+          message: 'Please provide the ticket ID (UUID) you want to update. Example: "Update ticket abc12345-... to resolved"',
+        };
+      } else {
+        toolResult = await updateTicketStatus({
+          ticketId: uuidMatch[0],
+          newStatus,
+        });
+      }
+      break;
+    }
+
     // ── Legacy tools ──
 
     case 'query_tickets':
@@ -516,9 +573,42 @@ export async function mediate(
     }
   }
 
-  // 5. Build response — ALWAYS use LLM if available, with tool data as context
+  // 5. Build response — use LLM with tool data as context, but fall back
+  //    to the tool's own message if the LLM returns a generic fallback.
   const toolContext = formatToolContext(intent, toolResult);
-  const llmMessage = await generateResponse(message, role, toolContext);
+  let llmMessage = await generateResponse(message, role, toolContext);
+
+  // Detect if the LLM returned a generic fallback that ignores the tool result.
+  // This happens when the API key is missing, the LLM call fails, or the
+  // conversational fallback fires — all of which discard the tool context.
+  const genericFallbackSignals = [
+    "i'm specialized in plumbing dispatch",
+    'specialized in plumbing',
+    "i don't know much about other topics",
+    'expert at pipes and drains',
+    'is something going on at your place',
+  ];
+  const lowerLLM = llmMessage.toLowerCase();
+  const isGenericFallback = genericFallbackSignals.some((sig) => lowerLLM.includes(sig));
+
+  if (isGenericFallback && toolResult.success) {
+    // The tool worked — use its own message instead of the irrelevant fallback
+    llmMessage = buildResponseMessage(intent, toolResult);
+  }
+
+  // Strip hallucinated tool calls / code blocks that the LLM sometimes generates
+  // (e.g. <tool_code>...</tool_code>, ```python...```, print(...))
+  llmMessage = llmMessage
+    .replace(/<tool_code>[\s\S]*?<\/tool_code>/gi, '')
+    .replace(/<tool_code_output>[\s\S]*?<\/tool_code_output>/gi, '')
+    .replace(/```(?:python|js|javascript|typescript)?\n[\s\S]*?```/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
+  // If stripping left the message empty or too short, fall back to the tool message
+  if (llmMessage.length < 10 && toolResult.success) {
+    llmMessage = buildResponseMessage(intent, toolResult);
+  }
 
   return {
     message: llmMessage,
@@ -586,6 +676,7 @@ function getSuggestedActions(intent: IntentType, role: UserRole, toolResult?: To
     generate_business_metrics: ['Show all tickets', 'Summarize user problems', 'Show all appointments'],
     summarize_ticket_problems: ['Show all tickets', 'Show business metrics', 'Show all users'],
     suggest_ticket_response: ['Summarize user problems', 'Show all tickets', 'Show business metrics'],
+    update_ticket_status: ['Show my tickets', 'Show all tickets', 'Show business metrics'],
     general_help: [],
   };
 
@@ -644,6 +735,9 @@ function buildResponseMessage(intent: IntentType, result: ToolResult): string {
 
     case 'create_ticket':
       return `${result.message}\n\nOur team will review your issue shortly.${getLeadCaptureNudge()}\n\n${getNewsletterTieIn('general')}`;
+
+    case 'update_ticket_status':
+      return result.message;
 
     case 'query_appointments': {
       const items = Array.isArray(result.data) ? result.data : [];
