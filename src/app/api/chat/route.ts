@@ -14,12 +14,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (body.apiKey && typeof body.apiKey !== 'string') {
+      return NextResponse.json(
+        { error: 'API key must be a string.' },
+        { status: 400 }
+      );
+    }
+
     // Validate role
     const validRoles: UserRole[] = ['anon', 'authenticated', 'admin'];
     const role: UserRole = validRoles.includes(body.role) ? body.role : 'anon';
 
     // Send through the mediator
-    const response = await mediate(body.message, role, body.userId);
+    const apiKey = body.apiKey?.trim();
+    const response = await mediate(body.message, role, body.userId, apiKey);
 
     return NextResponse.json(response);
   } catch (error) {

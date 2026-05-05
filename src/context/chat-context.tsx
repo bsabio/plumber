@@ -5,6 +5,7 @@ import {
   useContext,
   useState,
   useCallback,
+  useEffect,
   type ReactNode,
 } from 'react';
 import type { ChatMessage, UserRole, ChatResponse } from '@/lib/types';
@@ -19,6 +20,8 @@ interface ChatContextValue {
   sendMessage: (text: string) => Promise<void>;
   isExpanded: boolean;
   setIsExpanded: (v: boolean) => void;
+  apiKey: string;
+  setApiKey: (key: string) => void;
 }
 
 const ChatContext = createContext<ChatContextValue | null>(null);
@@ -95,6 +98,28 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(false);
   const [suggestions, setSuggestions] = useState<string[]>(getDefaultSuggestions('anon'));
   const [isExpanded, setIsExpanded] = useState(false);
+  const [apiKey, setApiKeyState] = useState('');
+
+  useEffect(() => {
+    try {
+      const storedKey = localStorage.getItem('geminiApiKey') || '';
+      if (storedKey) setApiKeyState(storedKey);
+    } catch {
+      // Ignore localStorage access errors (e.g. private mode)
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      if (apiKey && apiKey.trim()) {
+        localStorage.setItem('geminiApiKey', apiKey.trim());
+      } else {
+        localStorage.removeItem('geminiApiKey');
+      }
+    } catch {
+      // Ignore localStorage access errors
+    }
+  }, [apiKey]);
 
   // On role change — reset chat + suggestions
   const setRole = useCallback((newRole: UserRole) => {
@@ -125,10 +150,16 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       setIsLoading(true);
 
       try {
+        const trimmedKey = apiKey.trim();
+        const payload = {
+          message: trimmed,
+          role,
+          ...(trimmedKey ? { apiKey: trimmedKey } : {}),
+        };
         const res = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: trimmed, role }),
+          body: JSON.stringify(payload),
         });
         const data: ChatResponse = await res.json();
 
@@ -157,7 +188,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         setIsLoading(false);
       }
     },
-    [isLoading, role]
+    [apiKey, isLoading, role]
   );
 
   // Initialise with welcome message on first mount
@@ -182,6 +213,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         sendMessage,
         isExpanded,
         setIsExpanded,
+        apiKey,
+        setApiKey: setApiKeyState,
       }}
     >
       {children}

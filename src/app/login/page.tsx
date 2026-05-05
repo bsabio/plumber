@@ -1,6 +1,6 @@
+'use client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 
 export default function LoginPage() {
@@ -24,34 +24,17 @@ export default function LoginPage() {
           </Badge>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <label htmlFor="login-email" className="text-sm font-medium text-foreground">
-              Email
-            </label>
-            <Input
-              id="login-email"
-              type="email"
-              placeholder="you@example.com"
-              className="bg-input/50"
-            />
-          </div>
-          <div className="space-y-2">
-            <label htmlFor="login-password" className="text-sm font-medium text-foreground">
-              Password
-            </label>
-            <Input
-              id="login-password"
-              type="password"
-              placeholder="••••••••"
-              className="bg-input/50"
-            />
-          </div>
-          <Button className="w-full h-11 shadow-md shadow-primary/20" size="lg">
-            Sign In
+          <Button
+            className="w-full h-11 shadow-md shadow-primary/20"
+            size="lg"
+            onClick={() => {
+              window.location.href = '/api/auth/google';
+            }}
+          >
+            Continue with Google
           </Button>
           <p className="text-center text-xs text-muted-foreground">
-            Don&apos;t have an account?{' '}
-            <span className="text-primary cursor-pointer hover:underline">Sign up</span>
+            You will be redirected to Google to complete sign-in.
           </p>
         </CardContent>
       </Card>

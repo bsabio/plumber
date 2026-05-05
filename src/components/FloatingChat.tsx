@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useChatContext } from '@/context/chat-context';
 import MessageBubble from './MessageBubble';
 import SuggestionChips from './SuggestionChips';
+import GeminiKeyInline from '@/components/GeminiKeyInline';
 import {
   Sheet,
   SheetContent,
@@ -125,6 +126,11 @@ export default function FloatingChat() {
         {/* Chips */}
         <div className="py-2 px-2 shrink-0">
           <SuggestionChips />
+        </div>
+
+        {/* Gemini API key */}
+        <div className="px-3 pb-2 shrink-0">
+          <GeminiKeyInline />
         </div>
 
         {/* Input */}

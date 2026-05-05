@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useChatContext } from '@/context/chat-context';
 import MessageBubble from './MessageBubble';
 import SuggestionChips from './SuggestionChips';
+import GeminiKeyInline from '@/components/GeminiKeyInline';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -80,6 +81,11 @@ export default function HeroChat() {
       {/* Suggestion chips */}
       <div className="mx-auto w-full max-w-2xl py-3">
         <SuggestionChips />
+      </div>
+
+      {/* Gemini API key */}
+      <div className="mx-auto w-full max-w-2xl px-4">
+        <GeminiKeyInline />
       </div>
 
       {/* Input area */}

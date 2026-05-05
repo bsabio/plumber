@@ -51,6 +51,10 @@ export default function MetricsGraph() {
       try {
         const res = await fetch('/api/admin/metrics');
         const data = await res.json();
+        if (!res.ok || !data || data.error) {
+          setMetrics(null);
+          return;
+        }
         setMetrics(data);
       } catch {
         console.error('Failed to fetch metrics');
@@ -81,6 +85,22 @@ export default function MetricsGraph() {
     );
   }
 
+  const safeMetrics = {
+    ticketStatusBreakdown: metrics.ticketStatusBreakdown ?? [],
+    ticketPriorityBreakdown: metrics.ticketPriorityBreakdown ?? [],
+    appointmentStatusBreakdown: metrics.appointmentStatusBreakdown ?? [],
+    serviceTypeBreakdown: metrics.serviceTypeBreakdown ?? [],
+    summary: {
+      totalTickets: metrics.summary?.totalTickets ?? 0,
+      openTickets: metrics.summary?.openTickets ?? 0,
+      closedTickets: metrics.summary?.closedTickets ?? 0,
+      resolvedTickets: metrics.summary?.resolvedTickets ?? 0,
+      inProgressTickets: metrics.summary?.inProgressTickets ?? 0,
+      totalAppointments: metrics.summary?.totalAppointments ?? 0,
+      upcomingAppointments: metrics.summary?.upcomingAppointments ?? 0,
+    },
+  };
+
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
       {/* Service Type Bar Chart (Issue Frequency) */}
@@ -96,7 +116,7 @@ export default function MetricsGraph() {
         <CardContent className="px-2 pb-4">
           <ResponsiveContainer width="100%" height={220}>
             <BarChart
-              data={metrics.serviceTypeBreakdown}
+              data={safeMetrics.serviceTypeBreakdown}
               margin={{ top: 5, right: 20, left: 0, bottom: 5 }}
             >
               <XAxis
@@ -121,8 +141,8 @@ export default function MetricsGraph() {
                 }}
               />
               <Bar dataKey="value" radius={[6, 6, 0, 0]}>
-                {metrics.serviceTypeBreakdown.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={entry.fill} />
+                {safeMetrics.serviceTypeBreakdown.map((entry, index) => (
+                  <Cell key={`cell-${index}`} fill={entry.fill || '#60a5fa'} />
                 ))}
               </Bar>
             </BarChart>
@@ -137,14 +157,14 @@ export default function MetricsGraph() {
             🎫 Ticket Status
           </CardTitle>
           <p className="text-xs text-muted-foreground">
-            {metrics.summary.totalTickets} total tickets
+            {safeMetrics.summary.totalTickets} total tickets
           </p>
         </CardHeader>
         <CardContent className="px-2 pb-4">
           <ResponsiveContainer width="100%" height={220}>
             <PieChart>
               <Pie
-                data={metrics.ticketStatusBreakdown}
+                data={safeMetrics.ticketStatusBreakdown}
                 cx="50%"
                 cy="50%"
                 innerRadius={50}
@@ -153,8 +173,8 @@ export default function MetricsGraph() {
                 dataKey="value"
                 strokeWidth={0}
               >
-                {metrics.ticketStatusBreakdown.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={entry.fill} />
+                {safeMetrics.ticketStatusBreakdown.map((entry, index) => (
+                  <Cell key={`cell-${index}`} fill={entry.fill || '#34d399'} />
                 ))}
               </Pie>
               <Tooltip
@@ -181,13 +201,13 @@ export default function MetricsGraph() {
         <CardContent className="py-3 px-4">
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
             {[
-              { label: 'Total Tickets', value: metrics.summary.totalTickets, icon: '🎫' },
-              { label: 'Open', value: metrics.summary.openTickets, icon: '🟢' },
-              { label: 'In Progress', value: metrics.summary.inProgressTickets, icon: '🟡' },
-              { label: 'Resolved', value: metrics.summary.resolvedTickets, icon: '🔵' },
-              { label: 'Closed', value: metrics.summary.closedTickets, icon: '⚫' },
-              { label: 'Appointments', value: metrics.summary.totalAppointments, icon: '📅' },
-              { label: 'Upcoming', value: metrics.summary.upcomingAppointments, icon: '⏰' },
+              { label: 'Total Tickets', value: safeMetrics.summary.totalTickets, icon: '🎫' },
+              { label: 'Open', value: safeMetrics.summary.openTickets, icon: '🟢' },
+              { label: 'In Progress', value: safeMetrics.summary.inProgressTickets, icon: '🟡' },
+              { label: 'Resolved', value: safeMetrics.summary.resolvedTickets, icon: '🔵' },
+              { label: 'Closed', value: safeMetrics.summary.closedTickets, icon: '⚫' },
+              { label: 'Appointments', value: safeMetrics.summary.totalAppointments, icon: '📅' },
+              { label: 'Upcoming', value: safeMetrics.summary.upcomingAppointments, icon: '⏰' },
             ].map((stat) => (
               <div key={stat.label} className="text-center">
                 <p className="text-xs text-muted-foreground">{stat.label}</p>

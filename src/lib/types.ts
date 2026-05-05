@@ -39,6 +39,7 @@ export interface ChatRequest {
   message: string;
   role: UserRole;
   userId?: string;
+  apiKey?: string;
 }
 
 export interface ChatResponse {

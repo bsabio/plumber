@@ -20,7 +20,11 @@ import { getConversationalFallback } from '@/lib/system-prompt';
 // ── Singleton client ─────────────────────────────────────────
 let genAI: GoogleGenerativeAI | null = null;
 
-function getClient(): GoogleGenerativeAI | null {
+function getClient(apiKeyOverride?: string): GoogleGenerativeAI | null {
+  if (apiKeyOverride && apiKeyOverride.trim()) {
+    return new GoogleGenerativeAI(apiKeyOverride.trim());
+  }
+
   if (genAI) return genAI;
 
   // Check both common env var names
@@ -84,9 +88,10 @@ export function isLLMAvailable(): boolean {
 export async function generateResponse(
   message: string,
   role: UserRole,
-  context?: string
+  context?: string,
+  apiKeyOverride?: string
 ): Promise<string> {
-  const client = getClient();
+  const client = getClient(apiKeyOverride);
 
   if (!client) {
     console.log('[AI Client] No client available — returning static fallback.');

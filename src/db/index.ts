@@ -32,12 +32,14 @@ sqlite.exec(`
     email TEXT NOT NULL UNIQUE,
     role TEXT NOT NULL DEFAULT 'anon',
     phone TEXT,
+    specialty TEXT,
     created_at TEXT NOT NULL
   );
 
   CREATE TABLE IF NOT EXISTS tickets (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id),
+    technician_id TEXT REFERENCES users(id),
     subject TEXT NOT NULL,
     description TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'open',
@@ -49,6 +51,7 @@ sqlite.exec(`
   CREATE TABLE IF NOT EXISTS appointments (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id),
+    technician_id TEXT REFERENCES users(id),
     date TEXT NOT NULL,
     time TEXT NOT NULL,
     service_type TEXT NOT NULL,
@@ -73,6 +76,11 @@ sqlite.exec(`
     ('user_auth', 'Customer John', 'john@example.com', 'authenticated', '555-1234', datetime('now')),
     ('user_admin', 'Admin Operator', 'admin@example.com', 'admin', '555-9999', datetime('now'));
 `);
+
+// Ensure newer columns exist when an older DB is present
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN specialty TEXT`); } catch { /* already exists */ }
+try { sqlite.exec(`ALTER TABLE tickets ADD COLUMN technician_id TEXT REFERENCES users(id)`); } catch { /* already exists */ }
+try { sqlite.exec(`ALTER TABLE appointments ADD COLUMN technician_id TEXT REFERENCES users(id)`); } catch { /* already exists */ }
 
 export const db = drizzle(sqlite, { schema });
 

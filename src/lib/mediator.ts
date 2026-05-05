@@ -322,30 +322,42 @@ function extractDateFromMessage(message: string): string {
  * In production, this would come from a real auth session.
  */
 function getFallbackUserId(role: UserRole): string {
-  const user = db
-    .select()
-    .from(users)
-    .where(eq(users.role, role))
-    .limit(1)
-    .get();
-  return user?.id || 'unknown';
+  try {
+    const user = db
+      .select()
+      .from(users)
+      .where(eq(users.role, role))
+      .limit(1)
+      .get();
+    return user?.id || 'unknown';
+  } catch {
+    return 'unknown';
+  }
 }
 
 /**
  * Get fallback contact info for a role (from the DB user record).
  */
 function getFallbackContactInfo(userId: string) {
-  const user = db
-    .select()
-    .from(users)
-    .where(eq(users.id, userId))
-    .get();
+  try {
+    const user = db
+      .select()
+      .from(users)
+      .where(eq(users.id, userId))
+      .get();
 
-  return {
-    contactName: user?.name || 'Unknown Customer',
-    contactEmail: user?.email || 'unknown@example.com',
-    contactPhone: user?.phone || undefined,
-  };
+    return {
+      contactName: user?.name || 'Unknown Customer',
+      contactEmail: user?.email || 'unknown@example.com',
+      contactPhone: user?.phone || undefined,
+    };
+  } catch {
+    return {
+      contactName: 'Unknown Customer',
+      contactEmail: 'unknown@example.com',
+      contactPhone: undefined,
+    };
+  }
 }
 
 /**
@@ -355,7 +367,8 @@ function getFallbackContactInfo(userId: string) {
 export async function mediate(
   message: string,
   role: UserRole,
-  userId?: string
+  userId?: string,
+  apiKey?: string
 ): Promise<ChatResponse> {
   // 1. Classify intent
   const intent = classifyIntent(message);
@@ -587,7 +600,7 @@ export async function mediate(
         toolResult = await checkPlumberAvailability({ date });
         // Let the LLM craft the scheduling response with availability data
         const pivotContext = formatToolContext('check_plumber_availability', toolResult);
-        const pivotMessage = await generateResponse(message, role, pivotContext);
+        const pivotMessage = await generateResponse(message, role, pivotContext, apiKey);
         return {
           message: pivotMessage,
           toolResult,
@@ -623,7 +636,7 @@ export async function mediate(
     case 'general_help':
     default: {
       // No tool needed — pure conversation
-      const llmResponse = await generateResponse(message, role);
+      const llmResponse = await generateResponse(message, role, undefined, apiKey);
       return {
         message: llmResponse,
         intent: 'general_help',
@@ -635,7 +648,7 @@ export async function mediate(
   // 5. Build response — use LLM with tool data as context, but fall back
   //    to the tool's own message if the LLM returns a generic fallback.
   const toolContext = formatToolContext(intent, toolResult);
-  let llmMessage = await generateResponse(message, role, toolContext);
+  let llmMessage = await generateResponse(message, role, toolContext, apiKey);
 
   // Detect if the LLM returned a generic fallback that ignores the tool result.
   // This happens when the API key is missing, the LLM call fails, or the
