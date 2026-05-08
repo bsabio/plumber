@@ -17,6 +17,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { WrenchIcon, PipeLogoIcon, SendIcon } from '@/components/Icons';
 import { cn } from '@/lib/utils';
 
 export default function FloatingChat() {
@@ -69,12 +70,12 @@ export default function FloatingChat() {
         className={cn(
           'fixed bottom-16 right-6 z-40',
           'flex h-14 w-14 items-center justify-center',
-          'rounded-full bg-primary text-primary-foreground shadow-lg shadow-primary/30',
-          'transition-all duration-300 hover:scale-110 hover:shadow-xl hover:shadow-primary/40',
+          'rounded-full bg-[#d4651a] text-white shadow-lg',
+          'transition-all duration-300 hover:scale-105 hover:bg-[#b8541a]',
           'active:scale-95',
         )}
       >
-        <span className="text-2xl">💬</span>
+        <PipeLogoIcon size={22} className="text-white" />
         {messages.length > 1 && (
           <span className="absolute -top-0.5 -right-0.5 h-3.5 w-3.5 rounded-full bg-green-500 border-2 border-background animate-pulse" />
         )}
@@ -89,8 +90,8 @@ export default function FloatingChat() {
         <SheetHeader className="p-4 pb-3 border-b shrink-0 border-border/30 glass">
           <div className="flex items-center justify-between">
             <SheetTitle className="flex items-center gap-2 text-base">
-              <span>🔧</span>
-              <span className="bg-gradient-to-r from-primary to-blue-400 bg-clip-text text-transparent font-bold">
+              <PipeLogoIcon size={16} className="text-[#d4651a]" />
+              <span className="font-bold text-[#2c2416]">
                 Pipe Dream Plumbing
               </span>
             </SheetTitle>
@@ -154,7 +155,7 @@ export default function FloatingChat() {
               size="sm"
               className="h-10 px-4 shadow-sm"
             >
-              ➤
+              <SendIcon size={14} className="text-white" />
             </Button>
           </div>
         </div>

@@ -3,6 +3,7 @@
 import type { ChatMessage } from '@/lib/types';
 import ToolResultCard from './ToolResultCard';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { PersonIcon, WrenchIcon } from '@/components/Icons';
 import { cn } from '@/lib/utils';
 
 interface MessageBubbleProps {
@@ -23,13 +24,13 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
       <Avatar className="h-8 w-8 shrink-0 shadow-md">
         <AvatarFallback
           className={cn(
-            'text-sm',
+            'flex items-center justify-center',
             isUser
-              ? 'bg-primary/20 text-primary'
-              : 'bg-blue-500/20 text-blue-400',
+              ? 'bg-[#e8ddd0] text-[#d4651a]'
+              : 'bg-[#e8f5ec] text-[#3a7d4c]',
           )}
         >
-          {isUser ? '👤' : '🔧'}
+          {isUser ? <PersonIcon size={16} /> : <WrenchIcon size={16} />}
         </AvatarFallback>
       </Avatar>
 

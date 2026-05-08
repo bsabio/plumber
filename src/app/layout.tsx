@@ -4,7 +4,6 @@ import './globals.css';
 import { ChatProvider } from '@/context/chat-context';
 import NavBar from '@/components/NavBar';
 import FloatingChat from '@/components/FloatingChat';
-import RoleTestingFooter from '@/components/RoleTestingFooter';
 import { TooltipProvider } from '@/components/ui/tooltip';
 
 const inter = Inter({
@@ -32,7 +31,6 @@ export default function RootLayout({
             <NavBar />
             {children}
             <FloatingChat />
-            <RoleTestingFooter />
           </ChatProvider>
         </TooltipProvider>
       </body>

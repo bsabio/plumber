@@ -81,6 +81,7 @@ sqlite.exec(`
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN specialty TEXT`); } catch { /* already exists */ }
 try { sqlite.exec(`ALTER TABLE tickets ADD COLUMN technician_id TEXT REFERENCES users(id)`); } catch { /* already exists */ }
 try { sqlite.exec(`ALTER TABLE appointments ADD COLUMN technician_id TEXT REFERENCES users(id)`); } catch { /* already exists */ }
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN password_hash TEXT`); } catch { /* already exists */ }
 
 export const db = drizzle(sqlite, { schema });
 

@@ -9,7 +9,8 @@ export const users = sqliteTable('users', {
     .notNull()
     .default('anon'),
   phone: text('phone'),
-  specialty: text('specialty'), // e.g. 'drain', 'installation', 'emergency'
+  specialty: text('specialty'),
+  passwordHash: text('password_hash'),
   createdAt: text('created_at')
     .notNull()
     .$defaultFn(() => new Date().toISOString()),

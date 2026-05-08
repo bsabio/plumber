@@ -4,6 +4,7 @@ import type { ToolResult } from '@/lib/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
+import { TicketIcon, CalendarIcon, ResolveIcon, WarningIcon, NewsIcon, DocumentIcon } from '@/components/Icons';
 
 interface ToolResultCardProps {
   result: ToolResult;
@@ -15,14 +16,15 @@ export default function ToolResultCard({ result }: ToolResultCardProps) {
 
   if (!result.success) {
     return (
-      <Card className="border-destructive/30 bg-destructive/5">
+      <Card className="border-red-200 bg-red-50">
         <CardHeader className="pb-2 pt-3 px-3">
-          <Badge variant="destructive" className="w-fit text-xs">
-            ⚠️ {result.toolName}
-          </Badge>
+          <div className="flex items-center gap-1.5">
+            <WarningIcon size={14} className="text-red-600" />
+            <Badge variant="destructive" className="w-fit text-xs">{result.toolName}</Badge>
+          </div>
         </CardHeader>
         <CardContent className="px-3 pb-3">
-          <p className="text-sm text-destructive">{result.message}</p>
+          <p className="text-sm text-red-700">{result.message}</p>
         </CardContent>
       </Card>
     );
@@ -34,10 +36,12 @@ export default function ToolResultCard({ result }: ToolResultCardProps) {
     case 'manage_users':
       return <TableResult items={items} toolName={result.toolName} />;
     case 'create_ticket':
-    case 'schedule_appointment':
     case 'create_service_ticket':
+      return <CreateTicketCard result={result} />;
+    case 'schedule_appointment':
+      return <ScheduleCard result={result} />;
     case 'update_ticket_status':
-      return <SuccessCard result={result} />;
+      return <ResolveCard result={result} />;
     case 'get_ticket_detail':
       return <DetailCard item={items[0]} />;
     case 'get_newsletter':
@@ -117,28 +121,108 @@ function TableResult({
   );
 }
 
-function SuccessCard({ result }: { result: ToolResult }) {
-  const item = Array.isArray(result.data) ? result.data[0] : result.data;
+// ── Core Function 1: Create Ticket ──────────────────────────────────────────
+function CreateTicketCard({ result }: { result: ToolResult }) {
+  const item: Record<string, unknown> = Array.isArray(result.data) ? result.data[0] : result.data;
+  const subject = item?.subject ?? item?.title ?? 'New Ticket';
+  const priority = String(item?.priority ?? 'medium');
+  const status = String(item?.status ?? 'open');
+  const priorityColors: Record<string, string> = {
+    urgent: 'text-red-400 bg-red-500/10 border-red-500/30',
+    high: 'text-orange-400 bg-orange-500/10 border-orange-500/30',
+    medium: 'text-yellow-400 bg-yellow-500/10 border-yellow-500/30',
+    low: 'text-green-400 bg-green-500/10 border-green-500/30',
+  };
   return (
-    <Card className="border-green-500/20 bg-green-500/5">
-      <CardHeader className="pb-2 pt-3 px-3">
-        <Badge className="w-fit text-xs bg-green-600 hover:bg-green-700">✅ {result.toolName}</Badge>
-      </CardHeader>
-      <CardContent className="px-3 pb-3 space-y-2">
-        <p className="text-sm text-green-300">{result.message}</p>
-        {item && Object.keys(item).length > 0 && (
-          <div className="grid grid-cols-2 gap-2">
-            {Object.entries(item)
-              .filter(([key]) => !['id', 'userId', 'user_id'].includes(key))
-              .slice(0, 6)
-              .map(([key, value]) => (
-                <div key={key} className="rounded-md bg-background/40 px-2 py-1.5">
-                  <p className="text-[10px] text-muted-foreground">{formatColumnName(key)}</p>
-                  <p className="text-xs font-medium truncate">{String(value)}</p>
-                </div>
-              ))}
+    <Card className="border-blue-200 bg-blue-50">
+      <CardContent className="px-4 py-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <TicketIcon size={20} className="text-[#d4651a]" />
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-blue-400">Ticket Created</p>
+            <p className="text-sm font-semibold text-foreground leading-tight">{String(subject)}</p>
           </div>
+        </div>
+        <div className="flex gap-2 flex-wrap">
+          <span className={cn('rounded-full border px-2.5 py-0.5 text-[11px] font-semibold capitalize', priorityColors[priority] ?? priorityColors.medium)}>
+            {priority} priority
+          </span>
+          <span className="rounded-full border border-border/50 bg-background/40 px-2.5 py-0.5 text-[11px] capitalize text-muted-foreground">
+            {status}
+          </span>
+          {item?.id != null && (
+            <span className="rounded-full border border-border/50 bg-background/40 px-2.5 py-0.5 text-[11px] font-mono text-muted-foreground">
+              #{String(item.id)}
+            </span>
+          )}
+        </div>
+        {item?.description != null && (
+          <p className="text-xs text-muted-foreground leading-relaxed border-t border-border/30 pt-2">
+            {String(item.description).slice(0, 200)}
+          </p>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Core Function 2: Schedule Appointment ───────────────────────────────────
+function ScheduleCard({ result }: { result: ToolResult }) {
+  const item: Record<string, unknown> = Array.isArray(result.data) ? result.data[0] : result.data;
+  const date = item?.scheduledDate ?? item?.date ?? item?.scheduledAt ?? '';
+  const time = item?.scheduledTime ?? item?.time ?? '';
+  const service = item?.serviceType ?? item?.service ?? item?.notes ?? 'Plumbing Service';
+  return (
+    <Card className="border-green-200 bg-green-50">
+      <CardContent className="px-4 py-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <CalendarIcon size={20} className="text-[#3a7d4c]" />
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-violet-400">Appointment Scheduled</p>
+            <p className="text-sm font-semibold text-foreground">{String(service)}</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          {date && (
+            <div className="rounded-lg bg-background/40 border border-border/30 px-3 py-2">
+              <p className="text-[10px] text-muted-foreground">Date</p>
+              <p className="text-sm font-semibold">{String(date)}</p>
+            </div>
+          )}
+          {time && (
+            <div className="rounded-lg bg-background/40 border border-border/30 px-3 py-2">
+              <p className="text-[10px] text-muted-foreground">Time</p>
+              <p className="text-sm font-semibold">{String(time)}</p>
+            </div>
+          )}
+        </div>
+        {item?.id != null && (
+          <p className="text-[11px] font-mono text-muted-foreground/60">Confirmation #{String(item.id)}</p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Core Function 3: Resolve Ticket ─────────────────────────────────────────
+function ResolveCard({ result }: { result: ToolResult }) {
+  const item: Record<string, unknown> = Array.isArray(result.data) ? result.data[0] : result.data;
+  const subject = item?.subject ?? item?.title ?? 'Ticket';
+  return (
+    <Card className="border-amber-200 bg-amber-50">
+      <CardContent className="px-4 py-4">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-amber-100">
+            <ResolveIcon size={20} className="text-[#c49a3c]" />
+          </div>
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-emerald-400">Ticket Resolved</p>
+            <p className="text-sm font-semibold text-foreground leading-tight">{String(subject)}</p>
+            {item?.id != null && (
+              <p className="text-[11px] font-mono text-muted-foreground/60 mt-0.5">#{String(item.id)}</p>
+            )}
+          </div>
+        </div>
       </CardContent>
     </Card>
   );
@@ -157,7 +241,10 @@ function DetailCard({ item }: { item: Record<string, unknown> }) {
   return (
     <Card className="bg-card/50">
       <CardHeader className="pb-2 pt-3 px-3">
-        <CardTitle className="text-sm">🎫 Ticket Detail</CardTitle>
+            <CardTitle className="flex items-center gap-1.5 text-sm">
+              <DocumentIcon size={14} className="text-[#7a6a58]" />
+              Ticket Detail
+            </CardTitle>
       </CardHeader>
       <CardContent className="px-3 pb-3">
         <div className="grid grid-cols-2 gap-2">
@@ -193,7 +280,7 @@ function NewsletterResult({ items }: { items: Record<string, unknown>[] }) {
         <Card key={idx} className="bg-card/50">
           <CardContent className="py-3 px-3">
             <div className="flex items-center gap-2 mb-2">
-              <span className="text-sm">📰</span>
+              <NewsIcon size={14} className="text-[#7a6a58]" />
               <h4 className="text-sm font-semibold">{String(article.title)}</h4>
             </div>
             <Badge variant="secondary" className="text-[10px] mb-2">

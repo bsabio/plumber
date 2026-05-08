@@ -23,10 +23,8 @@ export default function AdminPage() {
       <div className="mx-auto max-w-[1400px]">
         {/* Header */}
         <div className="pt-4 pb-4">
-          <h1 className="text-2xl font-bold">
-            <span className="bg-gradient-to-r from-primary via-blue-400 to-cyan-400 bg-clip-text text-transparent">
-              ⚡ Operator Cockpit
-            </span>
+          <h1 className="text-2xl font-bold text-[#d4651a]">
+            Operator Cockpit
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Monitor tickets, analyze trends, and manage customer responses — all in one view
