@@ -32,12 +32,9 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
 
-# database
-/data/
-
-# drizzle
-/drizzle/
+# drizzle migrations are committed so Vercel deploys carry the SQL files.
 
 # vercel
 .vercel

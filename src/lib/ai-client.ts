@@ -8,41 +8,39 @@
  *
  *  Falls back gracefully to static responses if:
  *   - The API key is not configured
- *   - The Gemini API call fails
- *   - Rate limits are exceeded
+ *   - The Gemini API call fails (after retries)
+ *   - The call exceeds the configured timeout
  */
 
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/generative-ai';
 import type { UserRole } from '@/lib/types';
-import { getSystemInstruction } from '@/lib/system-prompt';
-import { getConversationalFallback } from '@/lib/system-prompt';
+import { getSystemInstruction, getConversationalFallback } from '@/lib/system-prompt';
+import { getGeminiEnvKey } from '@/lib/env';
+import { createLogger } from '@/lib/logger';
 
-// ── Singleton client ─────────────────────────────────────────
-let genAI: GoogleGenerativeAI | null = null;
+const log = createLogger('ai-client');
 
+// ── Singleton client (env-key only) ─────────────────────────────
+let envGenAI: GoogleGenerativeAI | null = null;
+
+/**
+ * Return a Gemini client. When `apiKeyOverride` is provided we always create
+ * a fresh client (so per-request user keys never get cached on the server).
+ * The env-key client is memoized.
+ */
 function getClient(apiKeyOverride?: string): GoogleGenerativeAI | null {
   if (apiKeyOverride && apiKeyOverride.trim()) {
+    // Per-request override — do NOT cache.
     return new GoogleGenerativeAI(apiKeyOverride.trim());
   }
 
-  if (genAI) return genAI;
+  if (envGenAI) return envGenAI;
 
-  // Check both common env var names
-  const apiKey =
-    process.env.GOOGLE_GENERATIVE_AI_API_KEY ||
-    process.env.GOOGLE_API_KEY ||
-    '';
-
-  console.log(`[AI Client] API key check: ${apiKey ? `found (${apiKey.slice(0, 8)}...)` : 'NOT FOUND'}`);
-
-  if (!apiKey || apiKey === 'your_gemini_api_key_here' || apiKey.trim() === '') {
-    console.warn('[AI Client] No valid API key — LLM disabled.');
-    return null;
-  }
-
-  genAI = new GoogleGenerativeAI(apiKey.trim());
-  console.log('[AI Client] Gemini client initialized successfully.');
-  return genAI;
+  const apiKey = getGeminiEnvKey();
+  log.debug('env key configured:', !!apiKey);
+  if (!apiKey) return null;
+  envGenAI = new GoogleGenerativeAI(apiKey);
+  return envGenAI;
 }
 
 // ── Configuration ────────────────────────────────────────────
@@ -55,7 +53,6 @@ const GENERATION_CONFIG = {
   maxOutputTokens: 512,
 };
 
-// ── Safety settings ──────────────────────────────────────────
 const SAFETY_SETTINGS = [
   {
     category: HarmCategory.HARM_CATEGORY_HARASSMENT,
@@ -75,63 +72,115 @@ const SAFETY_SETTINGS = [
   },
 ];
 
+export interface GenerateOptions {
+  /** Per-request Gemini key (won't be cached). */
+  apiKeyOverride?: string;
+  /** Hard timeout in milliseconds (default 15000). */
+  timeoutMs?: number;
+  /** Maximum retry attempts on transient failures (default 3, includes the initial try). */
+  maxAttempts?: number;
+}
+
 /**
- * Check if an LLM is available (API key is configured).
+ * Check if an LLM is available (an env API key is configured).
+ * Returns false even when a user-supplied key exists, because we don't have
+ * the request scope here.
  */
 export function isLLMAvailable(): boolean {
-  return getClient() !== null;
+  return !!getGeminiEnvKey();
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Inspect an error to decide whether it's worth retrying. Permanent
+ * (4xx other than 429) failures are not retried.
+ */
+function isTransient(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
+  if (msg.includes('aborted') || msg.includes('timeout')) return true;
+  if (msg.includes('rate limit') || msg.includes('429')) return true;
+  if (msg.includes('5')) {
+    // crude: messages with "500"/"502"/"503"/"504"
+    if (/(\b5\d\d\b)/.test(msg)) return true;
+  }
+  if (msg.includes('econnreset') || msg.includes('etimedout') || msg.includes('network')) return true;
+  return false;
 }
 
 /**
  * Generate a conversational response using Google Gemini.
+ *
+ * Behavior:
+ *   - If no API key is available anywhere, returns the static fallback.
+ *   - Each attempt is bounded by `timeoutMs` via an AbortController.
+ *   - Retries with jittered exponential backoff for transient errors only.
+ *   - Always returns a string — never throws.
  */
 export async function generateResponse(
   message: string,
   role: UserRole,
   context?: string,
-  apiKeyOverride?: string
+  options: GenerateOptions = {},
 ): Promise<string> {
+  const { apiKeyOverride, timeoutMs = 15_000, maxAttempts = 3 } = options;
+
   const client = getClient(apiKeyOverride);
-
   if (!client) {
-    console.log('[AI Client] No client available — returning static fallback.');
+    log.debug('no client configured — returning static fallback');
     return getConversationalFallback(message, role);
   }
 
-  console.log(`[AI Client] Generating response for: "${message.slice(0, 50)}..." (role: ${role}, hasContext: ${!!context})`);
+  const systemInstruction = getSystemInstruction(role);
+  const model = client.getGenerativeModel({
+    model: MODEL_NAME,
+    generationConfig: GENERATION_CONFIG,
+    safetySettings: SAFETY_SETTINGS,
+    systemInstruction,
+  });
 
-  try {
-    const systemInstruction = getSystemInstruction(role);
+  const prompt = context
+    ? `Context from our system:\n${context}\n\nUser message: ${message}`
+    : message;
 
-    const model = client.getGenerativeModel({
-      model: MODEL_NAME,
-      generationConfig: GENERATION_CONFIG,
-      safetySettings: SAFETY_SETTINGS,
-      systemInstruction,
-    });
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      // Race the SDK call against a hard timeout. The SDK doesn't reliably
+      // honor AbortSignal across versions, so we use a Promise.race instead.
+      const result = await Promise.race([
+        model.generateContent(prompt),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error(`Gemini call timed out after ${timeoutMs}ms`)),
+            timeoutMs,
+          ),
+        ),
+      ]);
 
-    // Build the prompt with optional context
-    let prompt = message;
-    if (context) {
-      prompt = `Context from our system:\n${context}\n\nUser message: ${message}`;
+      const text = result.response.text();
+      if (!text || text.trim().length === 0) {
+        log.debug('empty response — using static fallback');
+        return getConversationalFallback(message, role);
+      }
+      log.debug(`gemini response (attempt ${attempt}): ${text.length} chars`);
+      return text.trim();
+    } catch (error) {
+      lastErr = error;
+      const msg = error instanceof Error ? error.message : String(error);
+      log.warn(`gemini attempt ${attempt}/${maxAttempts} failed: ${msg}`);
+
+      if (attempt >= maxAttempts || !isTransient(error)) break;
+
+      // Jittered exponential backoff: 300ms, 700ms, 1500ms (with jitter)
+      const base = 300 * 2 ** (attempt - 1);
+      const jitter = Math.floor(Math.random() * 200);
+      await sleep(base + jitter);
     }
-
-    console.log(`[AI Client] Calling Gemini API (model: ${MODEL_NAME})...`);
-    const result = await model.generateContent(prompt);
-    const response = result.response;
-    const text = response.text();
-
-    console.log(`[AI Client] Gemini response: ${text ? text.slice(0, 100) + '...' : 'EMPTY'}`);
-
-    if (!text || text.trim().length === 0) {
-      console.warn('[AI Client] Empty response — using static fallback.');
-      return getConversationalFallback(message, role);
-    }
-
-    return text.trim();
-  } catch (error) {
-    const err = error as Error;
-    console.error(`[AI Client] Gemini API error: ${err.message}`);
-    return getConversationalFallback(message, role);
   }
+
+  log.error('gemini call failed after retries — falling back', lastErr);
+  return getConversationalFallback(message, role);
 }

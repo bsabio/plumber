@@ -95,7 +95,7 @@ export const TOOL_REGISTRY = [
   // ── Zod-validated MCP tools ──
   {
     name: 'get_newsletter_advice',
-    description: 'Queries the SQLite database for plumbing tips/articles from the newsletter to provide expert context in chat.',
+    description: 'Queries the newsletter_content table for plumbing tips/articles to provide expert context in chat.',
     roles: ['anon', 'authenticated', 'admin'],
     parameters: ['topic', 'category', 'limit'],
     validated: true,

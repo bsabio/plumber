@@ -13,13 +13,12 @@ export async function getLatestNewsletter(): Promise<{
   description: string;
   content: string;
 }> {
-  const articles = db
+  const articles = await db
     .select()
     .from(newsletterContent)
     .where(eq(newsletterContent.isActive, true))
     .orderBy(desc(newsletterContent.publishedAt))
-    .limit(3)
-    .all();
+    .limit(3);
 
   const content = articles
     .map((a) => `## ${a.title}\n*Category: ${a.category}*\n\n${a.body}`)
@@ -40,12 +39,11 @@ export async function getFAQ(): Promise<{
   description: string;
   content: string;
 }> {
-  const faqArticles = db
+  const faqArticles = await db
     .select()
     .from(newsletterContent)
     .where(eq(newsletterContent.category, 'faq'))
-    .orderBy(desc(newsletterContent.publishedAt))
-    .all();
+    .orderBy(desc(newsletterContent.publishedAt));
 
   const content = faqArticles
     .map((a) => `## ${a.title}\n\n${a.body}`)

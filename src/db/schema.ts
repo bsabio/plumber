@@ -1,7 +1,10 @@
-import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core';
+import { pgTable, text, boolean } from 'drizzle-orm/pg-core';
 
 // ── Users Table ──
-export const users = sqliteTable('users', {
+// NOTE: `id` is kept as `text` rather than `uuid` so application code can keep
+// generating IDs via the `uuid` npm package (and seed scripts can mint
+// well-known string IDs like 'user_anon') without touching every call site.
+export const users = pgTable('users', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   email: text('email').notNull().unique(),
@@ -11,13 +14,15 @@ export const users = sqliteTable('users', {
   phone: text('phone'),
   specialty: text('specialty'),
   passwordHash: text('password_hash'),
+  // Timestamps stay as ISO-8601 strings to match every call site that already
+  // formats dates via `new Date().toISOString()`.
   createdAt: text('created_at')
     .notNull()
     .$defaultFn(() => new Date().toISOString()),
 });
 
 // ── Tickets Table ──
-export const tickets = sqliteTable('tickets', {
+export const tickets = pgTable('tickets', {
   id: text('id').primaryKey(),
   userId: text('user_id')
     .notNull()
@@ -42,7 +47,7 @@ export const tickets = sqliteTable('tickets', {
 });
 
 // ── Appointments Table ──
-export const appointments = sqliteTable('appointments', {
+export const appointments = pgTable('appointments', {
   id: text('id').primaryKey(),
   userId: text('user_id')
     .notNull()
@@ -72,7 +77,7 @@ export const appointments = sqliteTable('appointments', {
 });
 
 // ── Newsletter Content Table ──
-export const newsletterContent = sqliteTable('newsletter_content', {
+export const newsletterContent = pgTable('newsletter_content', {
   id: text('id').primaryKey(),
   title: text('title').notNull(),
   body: text('body').notNull(),
@@ -82,7 +87,7 @@ export const newsletterContent = sqliteTable('newsletter_content', {
   publishedAt: text('published_at')
     .notNull()
     .$defaultFn(() => new Date().toISOString()),
-  isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+  isActive: boolean('is_active').notNull().default(true),
 });
 
 // Type exports

@@ -16,16 +16,15 @@ export async function queryTickets(params: {
     if (params.isAdmin) {
       // Admin sees all tickets
       results = params.status
-        ? db
+        ? await db
             .select()
             .from(tickets)
             .where(eq(tickets.status, params.status as 'open' | 'in_progress' | 'resolved' | 'closed'))
             .orderBy(desc(tickets.createdAt))
-            .all()
-        : db.select().from(tickets).orderBy(desc(tickets.createdAt)).all();
+        : await db.select().from(tickets).orderBy(desc(tickets.createdAt));
     } else if (params.userId) {
       results = params.status
-        ? db
+        ? await db
             .select()
             .from(tickets)
             .where(
@@ -35,13 +34,11 @@ export async function queryTickets(params: {
               )
             )
             .orderBy(desc(tickets.createdAt))
-            .all()
-        : db
+        : await db
             .select()
             .from(tickets)
             .where(eq(tickets.userId, params.userId))
-            .orderBy(desc(tickets.createdAt))
-            .all();
+            .orderBy(desc(tickets.createdAt));
     } else {
       results = [];
     }
@@ -65,11 +62,12 @@ export async function queryTickets(params: {
 // ── get_ticket_detail ──
 export async function getTicketDetail(ticketId: string): Promise<ToolResult> {
   try {
-    const result = db
+    const rows = await db
       .select()
       .from(tickets)
       .where(eq(tickets.id, ticketId))
-      .get();
+      .limit(1);
+    const result = rows[0];
 
     if (!result) {
       return {
@@ -116,7 +114,7 @@ export async function createTicket(params: {
       updatedAt: now,
     };
 
-    db.insert(tickets).values(newTicket).run();
+    await db.insert(tickets).values(newTicket);
 
     return {
       toolName: 'create_ticket',
@@ -142,18 +140,16 @@ export async function queryAppointments(params: {
   try {
     let results: Appointment[];
     if (params.isAdmin) {
-      results = db
+      results = await db
         .select()
         .from(appointments)
-        .orderBy(desc(appointments.date))
-        .all();
+        .orderBy(desc(appointments.date));
     } else if (params.userId) {
-      results = db
+      results = await db
         .select()
         .from(appointments)
         .where(eq(appointments.userId, params.userId))
-        .orderBy(desc(appointments.date))
-        .all();
+        .orderBy(desc(appointments.date));
     } else {
       results = [];
     }
@@ -196,7 +192,7 @@ export async function scheduleAppointment(params: {
       createdAt: new Date().toISOString(),
     };
 
-    db.insert(appointments).values(newAppt).run();
+    await db.insert(appointments).values(newAppt);
 
     return {
       toolName: 'schedule_appointment',
@@ -221,7 +217,7 @@ export async function getNewsletter(params?: {
   try {
     let results: NewsletterContent[];
     if (params?.category) {
-      results = db
+      results = await db
         .select()
         .from(newsletterContent)
         .where(
@@ -230,15 +226,13 @@ export async function getNewsletter(params?: {
             eq(newsletterContent.category, params.category as 'tip' | 'promotion' | 'update' | 'faq' | 'seasonal')
           )
         )
-        .orderBy(desc(newsletterContent.publishedAt))
-        .all();
+        .orderBy(desc(newsletterContent.publishedAt));
     } else {
-      results = db
+      results = await db
         .select()
         .from(newsletterContent)
         .where(eq(newsletterContent.isActive, true))
-        .orderBy(desc(newsletterContent.publishedAt))
-        .all();
+        .orderBy(desc(newsletterContent.publishedAt));
     }
 
     return {
@@ -264,11 +258,12 @@ export async function manageUsers(params?: {
 }): Promise<ToolResult> {
   try {
     if (params?.action === 'get' && params.userId) {
-      const user = db
+      const rows = await db
         .select()
         .from(users)
         .where(eq(users.id, params.userId))
-        .get();
+        .limit(1);
+      const user = rows[0];
 
       if (!user) {
         return {
@@ -287,7 +282,7 @@ export async function manageUsers(params?: {
       };
     }
 
-    const allUsers = db.select().from(users).all();
+    const allUsers = await db.select().from(users);
     return {
       toolName: 'manage_users',
       success: true,

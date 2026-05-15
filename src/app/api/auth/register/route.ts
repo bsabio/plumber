@@ -1,62 +1,84 @@
 import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
+import { z } from 'zod';
 import { db } from '@/db';
 import { users } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { buildSessionCookie } from '@/lib/auth-session';
+import { getAuthSecret } from '@/lib/env';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('auth/register');
+
+const RegisterSchema = z.object({
+  name: z.string().trim().min(1, 'Name is required.'),
+  email: z.string().trim().email('Please enter a valid email address.'),
+  password: z.string().min(6, 'Password must be at least 6 characters.'),
+});
 
 function hashPassword(password: string): string {
   return crypto.createHash('sha256').update(password).digest('hex');
 }
 
+const SESSION_MAX_AGE = 60 * 60 * 24 * 7;
+
 export async function POST(request: NextRequest) {
   try {
-    const { name, email, password } = await request.json() as {
-      name: string; email: string; password: string;
-    };
-
-    if (!name?.trim() || !email?.trim() || !password) {
-      return NextResponse.json({ error: 'Name, email, and password are required.' }, { status: 400 });
-    }
-    if (password.length < 6) {
-      return NextResponse.json({ error: 'Password must be at least 6 characters.' }, { status: 400 });
-    }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      return NextResponse.json({ error: 'Please enter a valid email address.' }, { status: 400 });
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: 'Invalid JSON body.' }, { status: 400 });
     }
 
-    // Check if email already registered
-    const existing = await db.select().from(users).where(eq(users.email, email.toLowerCase())).get();
+    const parsed = RegisterSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        {
+          error: 'Invalid request',
+          issues: parsed.error.flatten().fieldErrors,
+        },
+        { status: 400 },
+      );
+    }
+
+    const { name, email, password } = parsed.data;
+
+    const existingRows = await db
+      .select()
+      .from(users)
+      .where(eq(users.email, email.toLowerCase()))
+      .limit(1);
+    const existing = existingRows[0];
     if (existing) {
-      return NextResponse.json({ error: 'An account with this email already exists.' }, { status: 409 });
+      return NextResponse.json(
+        { error: 'An account with this email already exists.' },
+        { status: 409 },
+      );
     }
 
-    // Create the user
     const id = `user_${crypto.randomBytes(8).toString('hex')}`;
     const passwordHash = hashPassword(password);
     await db.insert(users).values({
       id,
-      name: name.trim(),
+      name,
       email: email.toLowerCase(),
       role: 'authenticated',
       passwordHash,
       createdAt: new Date().toISOString(),
     });
 
-    // Auto sign-in after registration
-    const authSecret = process.env.AUTH_SECRET || 'dev-secret';
-    const exp = Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7; // 7 days
     const sessionCookie = buildSessionCookie(
-      { sub: id, name: name.trim(), email: email.toLowerCase(), role: 'authenticated', exp },
-      authSecret,
-      60 * 60 * 24 * 7,
+      { sub: id, name, email: email.toLowerCase(), role: 'authenticated' },
+      getAuthSecret(),
+      SESSION_MAX_AGE,
     );
 
-    const response = NextResponse.json({ success: true, name: name.trim() });
+    const response = NextResponse.json({ success: true, name });
     response.headers.append('Set-Cookie', sessionCookie);
     return response;
   } catch (err) {
-    console.error('[register]', err);
+    log.error(err);
     return NextResponse.json({ error: 'Registration failed. Please try again.' }, { status: 500 });
   }
 }

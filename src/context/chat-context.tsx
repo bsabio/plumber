@@ -20,8 +20,10 @@ interface ChatContextValue {
   sendMessage: (text: string) => Promise<void>;
   isExpanded: boolean;
   setIsExpanded: (v: boolean) => void;
-  apiKey: string;
-  setApiKey: (key: string) => void;
+  /** Server-side configuration status — never exposes the raw key. */
+  hasApiKey: boolean;
+  /** Persist (or clear, when empty) the user's Gemini key on the server. */
+  setApiKey: (key: string) => Promise<void>;
 }
 
 const ChatContext = createContext<ChatContextValue | null>(null);
@@ -30,11 +32,7 @@ const ChatContext = createContext<ChatContextValue | null>(null);
 function getDefaultSuggestions(role: UserRole): string[] {
   switch (role) {
     case 'anon':
-      return [
-        'I have a leak',
-        'My drain is clogged',
-        'Schedule maintenance',
-      ];
+      return ['I have a leak', 'My drain is clogged', 'Schedule maintenance'];
     case 'authenticated':
       return [
         'I have a leak',
@@ -64,21 +62,21 @@ function getWelcomeMessage(role: UserRole): string {
     case 'anon':
       return (
         '🔧 **Pipe Dream Plumbing — Dispatch**\n\n' +
-        'Hey there! I\'m your virtual dispatcher. Tell me what\'s going on — ' +
-        'leaking pipe, clogged drain, or just need a checkup — and I\'ll get you sorted fast.\n\n' +
-        'What\'s the issue?'
+        "Hey there! I'm your virtual dispatcher. Tell me what's going on — " +
+        "leaking pipe, clogged drain, or just need a checkup — and I'll get you sorted fast.\n\n" +
+        "What's the issue?"
       );
     case 'authenticated':
       return (
         '🔧 **Welcome back!** Pipe Dream Dispatch here.\n\n' +
         'Need to report a problem, check on a ticket, or book a technician? ' +
-        'Just tell me what you need and I\'ll handle it.\n\n' +
+        "Just tell me what you need and I'll handle it.\n\n" +
         'What can I help with today?'
       );
     case 'admin':
       return (
         '⚡ **Operator Cockpit** — Dispatch ready.\n\n' +
-        'You\'ve got full access. I can summarize open problems, draft customer responses, ' +
+        "You've got full access. I can summarize open problems, draft customer responses, " +
         'pull business metrics, or manage scheduling.\n\n' +
         'What do you need?'
       );
@@ -96,30 +94,50 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const [role, setRoleState] = useState<UserRole>('anon');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [suggestions, setSuggestions] = useState<string[]>(getDefaultSuggestions('anon'));
+  const [suggestions, setSuggestions] = useState<string[]>(
+    getDefaultSuggestions('anon'),
+  );
   const [isExpanded, setIsExpanded] = useState(false);
-  const [apiKey, setApiKeyState] = useState('');
+  const [hasApiKey, setHasApiKey] = useState(false);
 
+  // Hydrate the server-side "configured" status on mount. The actual key
+  // never crosses back to the client.
   useEffect(() => {
-    try {
-      const storedKey = localStorage.getItem('geminiApiKey') || '';
-      if (storedKey) setApiKeyState(storedKey);
-    } catch {
-      // Ignore localStorage access errors (e.g. private mode)
-    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/settings/llm-key', { method: 'GET' });
+        if (!res.ok) return;
+        const data = (await res.json()) as { configured?: boolean };
+        if (!cancelled) setHasApiKey(!!data.configured);
+      } catch {
+        // Ignore — leave hasApiKey as false.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  useEffect(() => {
+  // Persist (or clear) the user's Gemini key via the settings endpoint.
+  const setApiKey = useCallback(async (key: string) => {
+    const trimmed = key.trim();
     try {
-      if (apiKey && apiKey.trim()) {
-        localStorage.setItem('geminiApiKey', apiKey.trim());
+      if (trimmed.length === 0) {
+        await fetch('/api/settings/llm-key', { method: 'DELETE' });
+        setHasApiKey(false);
       } else {
-        localStorage.removeItem('geminiApiKey');
+        const res = await fetch('/api/settings/llm-key', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ apiKey: trimmed }),
+        });
+        if (res.ok) setHasApiKey(true);
       }
     } catch {
-      // Ignore localStorage access errors
+      // Best-effort; leave state unchanged on network errors.
     }
-  }, [apiKey]);
+  }, []);
 
   // On role change — reset chat + suggestions
   const setRole = useCallback((newRole: UserRole) => {
@@ -150,12 +168,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       setIsLoading(true);
 
       try {
-        const trimmedKey = apiKey.trim();
-        const payload = {
-          message: trimmed,
-          role,
-          ...(trimmedKey ? { apiKey: trimmedKey } : {}),
-        };
+        const payload = { message: trimmed, role };
         const res = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -172,7 +185,6 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         };
         setMessages((prev) => [...prev, assistantMsg]);
 
-        // Update suggestions from server (dynamic chips)
         if (data.suggestedActions && data.suggestedActions.length > 0) {
           setSuggestions(data.suggestedActions);
         }
@@ -188,7 +200,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         setIsLoading(false);
       }
     },
-    [apiKey, isLoading, role]
+    [isLoading, role],
   );
 
   // Initialise with welcome message on first mount
@@ -213,8 +225,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         sendMessage,
         isExpanded,
         setIsExpanded,
-        apiKey,
-        setApiKey: setApiKeyState,
+        hasApiKey,
+        setApiKey,
       }}
     >
       {children}

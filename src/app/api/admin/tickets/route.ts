@@ -8,17 +8,13 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const status = searchParams.get('status');
 
-    let results;
-    if (status && ['open', 'in_progress', 'resolved', 'closed'].includes(status)) {
-      results = db
-        .select()
-        .from(tickets)
-        .where(eq(tickets.status, status as 'open' | 'in_progress' | 'resolved' | 'closed'))
-        .orderBy(desc(tickets.createdAt))
-        .all();
-    } else {
-      results = db.select().from(tickets).orderBy(desc(tickets.createdAt)).all();
-    }
+    const results = status && ['open', 'in_progress', 'resolved', 'closed'].includes(status)
+      ? await db
+          .select()
+          .from(tickets)
+          .where(eq(tickets.status, status as 'open' | 'in_progress' | 'resolved' | 'closed'))
+          .orderBy(desc(tickets.createdAt))
+      : await db.select().from(tickets).orderBy(desc(tickets.createdAt));
 
     return NextResponse.json({ tickets: results, total: results.length });
   } catch (error) {
@@ -52,11 +48,12 @@ export async function PATCH(request: NextRequest) {
     }
 
     // Check ticket exists
-    const existing = db
+    const existingRows = await db
       .select()
       .from(tickets)
       .where(eq(tickets.id, ticketId))
-      .get();
+      .limit(1);
+    const existing = existingRows[0];
 
     if (!existing) {
       return NextResponse.json(
@@ -67,13 +64,12 @@ export async function PATCH(request: NextRequest) {
 
     // Update
     const now = new Date().toISOString();
-    db.update(tickets)
+    await db.update(tickets)
       .set({
         status: newStatus as 'open' | 'in_progress' | 'resolved' | 'closed',
         updatedAt: now,
       })
-      .where(eq(tickets.id, ticketId))
-      .run();
+      .where(eq(tickets.id, ticketId));
 
     return NextResponse.json({
       success: true,

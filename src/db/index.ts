@@ -1,89 +1,61 @@
-import { drizzle } from 'drizzle-orm/better-sqlite3';
-import Database from 'better-sqlite3';
-import path from 'path';
+/**
+ * Drizzle ORM client backed by Neon Postgres via the `@neondatabase/serverless`
+ * HTTP driver. The HTTP driver is fully serverless-friendly (works on both
+ * Node and Edge runtimes) and does not require a connection pool.
+ *
+ * Schema migrations are managed by `drizzle-kit` — see `drizzle.config.ts`
+ * and the SQL files under `./drizzle/`. Apply them with `npm run db:migrate`
+ * (which runs `tsx src/db/migrate.ts`) before booting the app against a
+ * fresh database.
+ *
+ * If `DATABASE_URL` is missing in development we log a warning and export a
+ * stub `db` that throws on first use. That keeps `next dev` bootable for
+ * purely-frontend work; in production a missing URL is a hard error at
+ * module load.
+ */
+
+import { drizzle } from 'drizzle-orm/neon-http';
+import { neon } from '@neondatabase/serverless';
 import * as schema from './schema';
 
-let DB_PATH: string;
-if (process.env.VERCEL) {
-  // Vercel serverless environment is read-only except for /tmp
-  DB_PATH = path.join('/tmp', 'plumber.db');
+const DATABASE_URL = process.env.DATABASE_URL;
+const isProduction = process.env.NODE_ENV === 'production';
+
+type DrizzleDb = ReturnType<typeof drizzle<typeof schema>>;
+
+function buildStubDb(): DrizzleDb {
+  const message =
+    '[db] DATABASE_URL is not set. Configure a Neon Postgres connection ' +
+    'string before making any database calls (see README.md).';
+  const handler: ProxyHandler<object> = {
+    get() {
+      throw new Error(message);
+    },
+    apply() {
+      throw new Error(message);
+    },
+  };
+  return new Proxy({}, handler) as DrizzleDb;
+}
+
+let db: DrizzleDb;
+
+if (!DATABASE_URL) {
+  if (isProduction) {
+    throw new Error(
+      '[db] DATABASE_URL is required in production. Set it to your Neon ' +
+        'Postgres connection string in the deployment environment.',
+    );
+  }
+  console.warn(
+    '[db] DATABASE_URL not set — exporting a stub client. Any DB call will ' +
+      'throw until you populate `.env` (see `.env.example`).',
+  );
+  db = buildStubDb();
 } else {
-  DB_PATH = path.join(process.cwd(), 'data', 'plumber.db');
+  const sql = neon(DATABASE_URL);
+  db = drizzle(sql, { schema });
 }
 
-// Ensure the data directory exists
-import fs from 'fs';
-const dataDir = path.dirname(DB_PATH);
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
-}
-
-const sqlite = new Database(DB_PATH);
-
-// Enable WAL mode for better performance
-sqlite.pragma('journal_mode = WAL');
-sqlite.pragma('foreign_keys = ON');
-
-// Initialize schema on the fly if it doesn't exist (especially important for Vercel /tmp db)
-sqlite.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    email TEXT NOT NULL UNIQUE,
-    role TEXT NOT NULL DEFAULT 'anon',
-    phone TEXT,
-    specialty TEXT,
-    created_at TEXT NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS tickets (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL REFERENCES users(id),
-    technician_id TEXT REFERENCES users(id),
-    subject TEXT NOT NULL,
-    description TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'open',
-    priority TEXT NOT NULL DEFAULT 'medium',
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS appointments (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL REFERENCES users(id),
-    technician_id TEXT REFERENCES users(id),
-    date TEXT NOT NULL,
-    time TEXT NOT NULL,
-    service_type TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'scheduled',
-    notes TEXT,
-    address TEXT,
-    created_at TEXT NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS newsletter_content (
-    id TEXT PRIMARY KEY,
-    title TEXT NOT NULL,
-    body TEXT NOT NULL,
-    category TEXT NOT NULL,
-    published_at TEXT NOT NULL,
-    is_active INTEGER NOT NULL DEFAULT 1
-  );
-
-  -- Seed default users so foreign key constraints pass when booking
-  INSERT OR IGNORE INTO users (id, name, email, role, phone, created_at) VALUES 
-    ('user_anon', 'Guest User', 'guest@example.com', 'anon', '555-0000', datetime('now')),
-    ('user_auth', 'Customer John', 'john@example.com', 'authenticated', '555-1234', datetime('now')),
-    ('user_admin', 'Admin Operator', 'admin@example.com', 'admin', '555-9999', datetime('now'));
-`);
-
-// Ensure newer columns exist when an older DB is present
-try { sqlite.exec(`ALTER TABLE users ADD COLUMN specialty TEXT`); } catch { /* already exists */ }
-try { sqlite.exec(`ALTER TABLE tickets ADD COLUMN technician_id TEXT REFERENCES users(id)`); } catch { /* already exists */ }
-try { sqlite.exec(`ALTER TABLE appointments ADD COLUMN technician_id TEXT REFERENCES users(id)`); } catch { /* already exists */ }
-try { sqlite.exec(`ALTER TABLE users ADD COLUMN password_hash TEXT`); } catch { /* already exists */ }
-
-export const db = drizzle(sqlite, { schema });
-
-export { sqlite };
+export { db, schema };
 export default db;

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useChatContext } from '@/context/chat-context';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -9,37 +9,44 @@ import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 
 export default function GeminiSettings() {
-  const { apiKey, setApiKey } = useChatContext();
-  const [draftKey, setDraftKey] = useState(apiKey ?? '');
+  const { hasApiKey, setApiKey } = useChatContext();
+  const [draftKey, setDraftKey] = useState('');
   const [showKey, setShowKey] = useState(false);
+  const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    setDraftKey(apiKey ?? '');
-  }, [apiKey]);
-
-  const handleSave = () => {
-    setApiKey(draftKey.trim());
+  const handleSave = async () => {
+    const trimmed = draftKey.trim();
+    if (!trimmed) return;
+    setSaving(true);
+    try {
+      await setApiKey(trimmed);
+      setDraftKey('');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleClear = () => {
-    setDraftKey('');
-    setApiKey('');
+  const handleClear = async () => {
+    setSaving(true);
+    try {
+      await setApiKey('');
+      setDraftKey('');
+    } finally {
+      setSaving(false);
+    }
   };
-
-  const hasKey = !!apiKey && apiKey.trim().length > 0;
-  const isDirty = (draftKey ?? '').trim() !== (apiKey ?? '').trim();
 
   return (
     <Card className="glass border-border/40">
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <CardTitle className="text-base font-semibold">Gemini API Key</CardTitle>
-          <Badge variant={hasKey ? 'secondary' : 'outline'}>
-            {hasKey ? 'Saved locally' : 'Not set'}
+          <Badge variant={hasApiKey ? 'secondary' : 'outline'}>
+            {hasApiKey ? 'Configured ✓' : 'Not configured'}
           </Badge>
         </div>
         <p className="text-xs text-muted-foreground">
-          Store your key in this browser to enable live Gemini responses when running online.
+          Store your key on the server (encrypted with the session secret) to enable live Gemini responses.
         </p>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -49,7 +56,7 @@ export default function GeminiSettings() {
               type={showKey ? 'text' : 'password'}
               value={draftKey}
               onChange={(e) => setDraftKey(e.target.value)}
-              placeholder="AIza..."
+              placeholder={hasApiKey ? 'Enter a new key to replace…' : 'AIza...'}
               autoComplete="off"
               className="flex-1"
             />
@@ -63,22 +70,26 @@ export default function GeminiSettings() {
             </Button>
           </div>
           <div className="flex items-center gap-2">
-            <Button size="sm" onClick={handleSave} disabled={!isDirty}>
+            <Button
+              size="sm"
+              onClick={handleSave}
+              disabled={!draftKey.trim() || saving}
+            >
               Save key
             </Button>
             <Button
               size="sm"
               variant="ghost"
               onClick={handleClear}
-              disabled={!draftKey}
-              className={cn(!draftKey && 'pointer-events-none')}
+              disabled={!hasApiKey || saving}
+              className={cn(!hasApiKey && 'pointer-events-none')}
             >
               Clear
             </Button>
           </div>
         </div>
         <p className="text-xs text-muted-foreground">
-          The key is stored in local storage and sent only with your chat requests. Reload the page if you switch accounts.
+          The key is encrypted with AES-256-GCM using your auth secret and stored in an HttpOnly cookie. It is never sent back to the browser.
         </p>
       </CardContent>
     </Card>

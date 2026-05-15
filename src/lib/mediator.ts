@@ -1,11 +1,6 @@
 import type { UserRole, IntentType, ToolResult, ChatResponse } from '@/lib/types';
 import { hasPermission, getAccessDeniedMessage } from '@/mcp-server/auth';
-import {
-  getHelpMessage as getSystemHelpMessage,
-  getLeadCaptureNudge,
-  getNewsletterTieIn,
-  getConversationalFallback,
-} from '@/lib/system-prompt';
+import { getLeadCaptureNudge, getNewsletterTieIn } from '@/lib/system-prompt';
 import { generateResponse } from '@/lib/ai-client';
 import {
   queryTickets,
@@ -131,8 +126,6 @@ const INTENT_PATTERNS: { intent: IntentType; keywords: string[] }[] = [
     keywords: [
       'schedule', 'book', 'appointment', 'set up a visit',
       'come out', 'send someone',
-      'monday', 'tuesday', 'wednesday', 'thursday', 'friday',
-      'saturday', 'sunday', 'tomorrow', 'next week',
     ],
   },
   {
@@ -167,9 +160,9 @@ const INTENT_PATTERNS: { intent: IntentType; keywords: string[] }[] = [
 ];
 
 /**
- * Classify a user message into an intent.
+ * Classify a user message into an intent. Exported for tests.
  */
-function classifyIntent(message: string): IntentType {
+export function classifyIntent(message: string): IntentType {
   const lowerMsg = message.toLowerCase();
 
   // ── UUID + status-word heuristic ──
@@ -197,6 +190,15 @@ function classifyIntent(message: string): IntentType {
     }
   }
 
+  // Day-name / "tomorrow" should only imply scheduling when paired with an
+  // action verb. This avoids false positives on retrospective statements like
+  // "I had a leak Monday" or "the drain started clogging tomorrow morning".
+  const dayOrRelative = /\b(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|next week)\b/;
+  const scheduleVerb = /\b(schedule|book|appointment|visit|come out|send|set up|reschedule)\b/;
+  if (dayOrRelative.test(lowerMsg) && scheduleVerb.test(lowerMsg)) {
+    return 'schedule_appointment';
+  }
+
   // Fallback for greetings/social chat
   if (lowerMsg.match(/\b(hi|hello|hey|who are you|thanks|thank you|bye)\b/)) {
     return 'general_help';
@@ -213,9 +215,9 @@ function classifyIntent(message: string): IntentType {
 }
 
 /**
- * Extract parameters from a message for ticket creation.
+ * Extract parameters from a message for ticket creation. Exported for tests.
  */
-function extractTicketParams(message: string) {
+export function extractTicketParams(message: string) {
   // Simple extraction — the message itself becomes the description
   const subject = message.length > 60 ? message.slice(0, 60) + '...' : message;
   
@@ -233,9 +235,9 @@ function extractTicketParams(message: string) {
 }
 
 /**
- * Extract parameters from a message for appointment scheduling.
+ * Extract parameters from a message for appointment scheduling. Exported for tests.
  */
-function extractAppointmentParams(message: string) {
+export function extractAppointmentParams(message: string) {
   // Extract date patterns (simple extraction)
   const dateMatch = message.match(/(\d{4}-\d{2}-\d{2})/);
   const dayMatch = message.match(/(?:next\s+|this\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i);
@@ -258,11 +260,14 @@ function extractAppointmentParams(message: string) {
     date = tomorrow.toISOString().split('T')[0];
   }
 
-  // Extract time
-  const timeMatch = message.match(/(\d{1,2}):?(\d{2})?\s*(am|pm)?/i);
+  // Extract time. Require either an explicit am/pm marker or an explicit
+  // `HH:MM` form so we don't accidentally lift the year out of an ISO date.
   let time = '09:00';
+  const timeAmPm = message.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i);
+  const timeColon = !timeAmPm ? message.match(/\b(\d{1,2}):(\d{2})\b/) : null;
+  const timeMatch = timeAmPm ?? timeColon;
   if (timeMatch) {
-    let hours = parseInt(timeMatch[1]);
+    let hours = parseInt(timeMatch[1], 10);
     const minutes = timeMatch[2] || '00';
     const period = timeMatch[3]?.toLowerCase();
     if (period === 'pm' && hours < 12) hours += 12;
@@ -282,9 +287,9 @@ function extractAppointmentParams(message: string) {
 }
 
 /**
- * Extract a date from a chat message for availability checks.
+ * Extract a date from a chat message for availability checks. Exported for tests.
  */
-function extractDateFromMessage(message: string): string {
+export function extractDateFromMessage(message: string): string {
   const dateMatch = message.match(/(\d{4}-\d{2}-\d{2})/);
   if (dateMatch) return dateMatch[1];
 
@@ -320,16 +325,18 @@ function extractDateFromMessage(message: string): string {
 /**
  * Get a fallback userId for a given role.
  * In production, this would come from a real auth session.
+ *
+ * Async because the Neon HTTP driver returns promises — there's no
+ * synchronous read path. Callers in `mediate` await this.
  */
-function getFallbackUserId(role: UserRole): string {
+async function getFallbackUserId(role: UserRole): Promise<string> {
   try {
-    const user = db
+    const rows = await db
       .select()
       .from(users)
       .where(eq(users.role, role))
-      .limit(1)
-      .get();
-    return user?.id || 'unknown';
+      .limit(1);
+    return rows[0]?.id || 'unknown';
   } catch {
     return 'unknown';
   }
@@ -338,13 +345,18 @@ function getFallbackUserId(role: UserRole): string {
 /**
  * Get fallback contact info for a role (from the DB user record).
  */
-function getFallbackContactInfo(userId: string) {
+async function getFallbackContactInfo(userId: string): Promise<{
+  contactName: string;
+  contactEmail: string;
+  contactPhone: string | undefined;
+}> {
   try {
-    const user = db
+    const rows = await db
       .select()
       .from(users)
       .where(eq(users.id, userId))
-      .get();
+      .limit(1);
+    const user = rows[0];
 
     return {
       contactName: user?.name || 'Unknown Customer',
@@ -382,7 +394,7 @@ export async function mediate(
   }
 
   // 3. Resolve userId if not provided
-  const resolvedUserId = userId || getFallbackUserId(role);
+  const resolvedUserId = userId || (await getFallbackUserId(role));
 
   // 4. Dispatch to the appropriate MCP tool
   let toolResult: ToolResult;
@@ -411,7 +423,7 @@ export async function mediate(
     }
 
     case 'create_service_ticket': {
-      const contactInfo = getFallbackContactInfo(resolvedUserId);
+      const contactInfo = await getFallbackContactInfo(resolvedUserId);
 
       let urgencyLevel: 'low' | 'medium' | 'high' | 'urgent' = 'medium';
       const lower = message.toLowerCase();
@@ -521,7 +533,7 @@ export async function mediate(
       }
 
       // Resolve technician by name from the message
-      const technicians = getTechnicians();
+      const technicians = await getTechnicians();
       const lowerMsg = message.toLowerCase();
       const matched = technicians.find((t) =>
         lowerMsg.includes(t.name.split(' ')[0].toLowerCase()) ||
@@ -600,7 +612,7 @@ export async function mediate(
         toolResult = await checkPlumberAvailability({ date });
         // Let the LLM craft the scheduling response with availability data
         const pivotContext = formatToolContext('check_plumber_availability', toolResult);
-        const pivotMessage = await generateResponse(message, role, pivotContext, apiKey);
+        const pivotMessage = await generateResponse(message, role, pivotContext, { apiKeyOverride: apiKey });
         return {
           message: pivotMessage,
           toolResult,
@@ -636,7 +648,7 @@ export async function mediate(
     case 'general_help':
     default: {
       // No tool needed — pure conversation
-      const llmResponse = await generateResponse(message, role, undefined, apiKey);
+      const llmResponse = await generateResponse(message, role, undefined, { apiKeyOverride: apiKey });
       return {
         message: llmResponse,
         intent: 'general_help',
@@ -648,7 +660,7 @@ export async function mediate(
   // 5. Build response — use LLM with tool data as context, but fall back
   //    to the tool's own message if the LLM returns a generic fallback.
   const toolContext = formatToolContext(intent, toolResult);
-  let llmMessage = await generateResponse(message, role, toolContext, apiKey);
+  let llmMessage = await generateResponse(message, role, toolContext, { apiKeyOverride: apiKey });
 
   // Detect if the LLM returned a generic fallback that ignores the tool result.
   // This happens when the API key is missing, the LLM call fails, or the

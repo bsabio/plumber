@@ -49,8 +49,8 @@ export type GetNewsletterAdviceInput = z.infer<typeof GetNewsletterAdviceInputSc
 
 /**
  * get_newsletter_advice
- * Queries the SQLite newsletter_content table for plumbing tips/articles
- * to provide expert context in chat.
+ * Queries the newsletter_content table for plumbing tips/articles to
+ * provide expert context in chat.
  *
  * Roles: anon, authenticated, admin
  */
@@ -72,31 +72,26 @@ export async function getNewsletterAdvice(
 
   try {
     // Build query dynamically
-    let query = db
-      .select()
-      .from(newsletterContent)
-      .where(eq(newsletterContent.isActive, true))
-      .orderBy(desc(newsletterContent.publishedAt))
-      .limit(limit);
-
-    // Apply category filter
-    if (category) {
-      query = db
-        .select()
-        .from(newsletterContent)
-        .where(
-          and(
-            eq(newsletterContent.isActive, true),
-            eq(newsletterContent.category, category)
+    let results = category
+      ? await db
+          .select()
+          .from(newsletterContent)
+          .where(
+            and(
+              eq(newsletterContent.isActive, true),
+              eq(newsletterContent.category, category)
+            )
           )
-        )
-        .orderBy(desc(newsletterContent.publishedAt))
-        .limit(limit);
-    }
+          .orderBy(desc(newsletterContent.publishedAt))
+          .limit(limit)
+      : await db
+          .select()
+          .from(newsletterContent)
+          .where(eq(newsletterContent.isActive, true))
+          .orderBy(desc(newsletterContent.publishedAt))
+          .limit(limit);
 
-    let results = query.all();
-
-    // Apply topic keyword filter in-memory (SQLite LIKE via JS)
+    // Apply topic keyword filter in-memory
     if (topic) {
       const lowerTopic = topic.toLowerCase();
       results = results.filter(
@@ -246,7 +241,7 @@ export async function createServiceTicket(
       updatedAt: now,
     };
 
-    db.insert(tickets).values(newTicket).run();
+    await db.insert(tickets).values(newTicket);
 
     return {
       toolName: 'create_service_ticket',
@@ -343,31 +338,26 @@ export async function checkPlumberAvailability(
 
   try {
     // Fetch existing appointments for the requested date
-    let bookedAppointments;
-    if (serviceType) {
-      bookedAppointments = db
-        .select()
-        .from(appointments)
-        .where(
-          and(
-            eq(appointments.date, date),
-            eq(appointments.serviceType, serviceType),
-            ne(appointments.status, 'cancelled')
+    const bookedAppointments = serviceType
+      ? await db
+          .select()
+          .from(appointments)
+          .where(
+            and(
+              eq(appointments.date, date),
+              eq(appointments.serviceType, serviceType),
+              ne(appointments.status, 'cancelled')
+            )
           )
-        )
-        .all();
-    } else {
-      bookedAppointments = db
-        .select()
-        .from(appointments)
-        .where(
-          and(
-            eq(appointments.date, date),
-            ne(appointments.status, 'cancelled')
-          )
-        )
-        .all();
-    }
+      : await db
+          .select()
+          .from(appointments)
+          .where(
+            and(
+              eq(appointments.date, date),
+              ne(appointments.status, 'cancelled')
+            )
+          );
 
     // Determine which slots are booked
     const bookedTimes = new Set(bookedAppointments.map((a) => a.time));
@@ -532,21 +522,17 @@ export async function generateBusinessMetrics(
 
   try {
     // ── Ticket metrics ──
-    let allTickets;
-    if (dateFrom && dateTo) {
-      allTickets = db
-        .select()
-        .from(tickets)
-        .where(
-          and(
-            gte(tickets.createdAt, dateFrom),
-            sql`${tickets.createdAt} <= ${dateTo + 'T23:59:59.999Z'}`
+    const allTickets = dateFrom && dateTo
+      ? await db
+          .select()
+          .from(tickets)
+          .where(
+            and(
+              gte(tickets.createdAt, dateFrom),
+              sql`${tickets.createdAt} <= ${dateTo + 'T23:59:59.999Z'}`
+            )
           )
-        )
-        .all();
-    } else {
-      allTickets = db.select().from(tickets).all();
-    }
+      : await db.select().from(tickets);
 
     // Count by status
     const statusCounts: Record<string, number> = {};
@@ -573,21 +559,17 @@ export async function generateBusinessMetrics(
     );
 
     // ── Appointment metrics ──
-    let allAppointments;
-    if (dateFrom && dateTo) {
-      allAppointments = db
-        .select()
-        .from(appointments)
-        .where(
-          and(
-            gte(appointments.date, dateFrom),
-            sql`${appointments.date} <= ${dateTo}`
+    const allAppointments = dateFrom && dateTo
+      ? await db
+          .select()
+          .from(appointments)
+          .where(
+            and(
+              gte(appointments.date, dateFrom),
+              sql`${appointments.date} <= ${dateTo}`
+            )
           )
-        )
-        .all();
-    } else {
-      allAppointments = db.select().from(appointments).all();
-    }
+      : await db.select().from(appointments);
 
     const apptStatusCounts: Record<string, number> = {};
     const serviceTypeCounts: Record<string, number> = {};
@@ -707,17 +689,13 @@ export async function summarizeTicketProblems(
   const { statusFilter } = parsed.data;
 
   try {
-    let allTickets;
-    if (statusFilter === 'all') {
-      allTickets = db.select().from(tickets).orderBy(desc(tickets.createdAt)).all();
-    } else {
-      allTickets = db
-        .select()
-        .from(tickets)
-        .where(eq(tickets.status, statusFilter as 'open' | 'in_progress'))
-        .orderBy(desc(tickets.createdAt))
-        .all();
-    }
+    const allTickets = statusFilter === 'all'
+      ? await db.select().from(tickets).orderBy(desc(tickets.createdAt))
+      : await db
+          .select()
+          .from(tickets)
+          .where(eq(tickets.status, statusFilter as 'open' | 'in_progress'))
+          .orderBy(desc(tickets.createdAt));
 
     if (allTickets.length === 0) {
       return {
@@ -813,7 +791,7 @@ export async function suggestTicketResponse(
 
   try {
     // Find ticket by subject (fuzzy match)
-    const allTickets = db.select().from(tickets).all();
+    const allTickets = await db.select().from(tickets);
     const matchedTicket = allTickets.find(
       (t) =>
         t.subject.toLowerCase().includes(ticketSubject.toLowerCase()) ||
@@ -822,11 +800,11 @@ export async function suggestTicketResponse(
 
     // Get relevant newsletter content for advice
     const issueType = classifyIssue(ticketSubject);
-    const relevantArticles = db
+    const activeArticles = await db
       .select()
       .from(newsletterContent)
-      .where(eq(newsletterContent.isActive, true))
-      .all()
+      .where(eq(newsletterContent.isActive, true));
+    const relevantArticles = activeArticles
       .filter((a) => {
         const combined = `${a.title} ${a.body}`.toLowerCase();
         const searchTerms = ticketSubject.toLowerCase().split(' ').filter((w) => w.length > 3);
@@ -961,11 +939,12 @@ export async function updateTicketStatus(
 
   try {
     // Check ticket exists
-    const existing = db
+    const existingRows = await db
       .select()
       .from(tickets)
       .where(eq(tickets.id, ticketId))
-      .get();
+      .limit(1);
+    const existing = existingRows[0];
 
     if (!existing) {
       return {
@@ -995,10 +974,9 @@ export async function updateTicketStatus(
 
     // Perform the update
     const now = new Date().toISOString();
-    db.update(tickets)
+    await db.update(tickets)
       .set({ status: newStatus, updatedAt: now })
-      .where(eq(tickets.id, ticketId))
-      .run();
+      .where(eq(tickets.id, ticketId));
 
     return {
       toolName: 'update_ticket_status',
@@ -1058,12 +1036,11 @@ export type AssignTechnicianInput = z.infer<typeof AssignTechnicianInputSchema>;
  * Helper — returns all users with role = 'technician'.
  * Used by assign_technician and check_plumber_availability.
  */
-export function getTechnicians() {
-  return db
+export async function getTechnicians() {
+  return await db
     .select()
     .from(users)
-    .where(eq(users.role, 'technician'))
-    .all();
+    .where(eq(users.role, 'technician'));
 }
 
 /**
@@ -1091,11 +1068,12 @@ export async function assignTechnician(
 
   try {
     // Verify ticket exists
-    const ticket = db
+    const ticketRows = await db
       .select()
       .from(tickets)
       .where(eq(tickets.id, ticketId))
-      .get();
+      .limit(1);
+    const ticket = ticketRows[0];
 
     if (!ticket) {
       return {
@@ -1107,11 +1085,12 @@ export async function assignTechnician(
     }
 
     // Verify technician exists and has the technician role
-    const technician = db
+    const techRows = await db
       .select()
       .from(users)
       .where(and(eq(users.id, technicianId), eq(users.role, 'technician')))
-      .get();
+      .limit(1);
+    const technician = techRows[0];
 
     if (!technician) {
       return {
@@ -1139,18 +1118,16 @@ export async function assignTechnician(
 
     // Perform the assignment
     const now = new Date().toISOString();
-    db.update(tickets)
+    await db.update(tickets)
       .set({ technicianId, updatedAt: now })
-      .where(eq(tickets.id, ticketId))
-      .run();
+      .where(eq(tickets.id, ticketId));
 
     // Auto-progress status to in_progress if it's still open
     let statusNote = '';
     if (ticket.status === 'open') {
-      db.update(tickets)
+      await db.update(tickets)
         .set({ status: 'in_progress', updatedAt: now })
-        .where(eq(tickets.id, ticketId))
-        .run();
+        .where(eq(tickets.id, ticketId));
       statusNote = ' Status auto-updated to **in_progress**.';
     }
 
@@ -1188,7 +1165,7 @@ export const MCP_TOOL_DEFINITIONS = [
   {
     name: 'get_newsletter_advice',
     description:
-      'Queries the SQLite database for plumbing tips/articles from the newsletter to provide expert context in chat.',
+      'Queries the newsletter_content table for plumbing tips/articles to provide expert context in chat.',
     inputSchema: GetNewsletterAdviceInputSchema,
     roles: ['anon', 'authenticated', 'admin'] as const,
     handler: getNewsletterAdvice,
