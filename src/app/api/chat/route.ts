@@ -3,12 +3,15 @@ import { z } from 'zod';
 import { mediate } from '@/lib/mediator';
 import {
   parseCookies,
+  SESSION_COOKIE_NAME,
   USER_LLM_KEY_COOKIE_NAME,
   decryptSecret,
+  verifySessionToken,
 } from '@/lib/auth-session';
-import { getAuthSecret } from '@/lib/env';
+import { env, getAuthSecret } from '@/lib/env';
 import { chatRateLimit } from '@/lib/rate-limit';
 import { createLogger } from '@/lib/logger';
+import type { UserRole } from '@/lib/types';
 
 const log = createLogger('api/chat');
 
@@ -65,14 +68,40 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { message, role, userId } = parsed.data;
+    const { message, role: claimedRole, userId: claimedUserId } = parsed.data;
+
+    // Trust the signed session cookie over anything the client claims.
+    // If the user is logged in, override role+userId from the session so a
+    // user can't impersonate someone else by sending a different userId/role
+    // in the request body.
+    const cookies = parseCookies(request.headers.get('cookie'));
+    let sessionRole: UserRole | undefined;
+    let sessionUserId: string | undefined;
+    const sessionToken = cookies[SESSION_COOKIE_NAME];
+    if (sessionToken && (env.AUTH_SECRET || !env.isProduction)) {
+      try {
+        const payload = verifySessionToken(sessionToken, getAuthSecret());
+        if (payload) {
+          if (typeof payload.role === 'string') {
+            sessionRole = payload.role as UserRole;
+          }
+          if (typeof payload.sub === 'string') {
+            sessionUserId = payload.sub;
+          }
+        }
+      } catch (e) {
+        log.warn('failed to verify session token', e);
+      }
+    }
+
+    const role: UserRole = sessionRole ?? claimedRole;
+    const userId = sessionUserId ?? claimedUserId;
 
     // Pull the user-supplied Gemini key from the encrypted cookie if present.
     // We deliberately ignore any `apiKey` value in the request body to avoid
     // logging or echoing it.
     let userKey: string | undefined;
     try {
-      const cookies = parseCookies(request.headers.get('cookie'));
       const enc = cookies[USER_LLM_KEY_COOKIE_NAME];
       if (enc) {
         const dec = decryptSecret(enc, getAuthSecret());

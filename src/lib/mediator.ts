@@ -329,16 +329,16 @@ export function extractDateFromMessage(message: string): string {
  * Async because the Neon HTTP driver returns promises — there's no
  * synchronous read path. Callers in `mediate` await this.
  */
-async function getFallbackUserId(role: UserRole): Promise<string> {
+async function getFallbackUserId(role: UserRole): Promise<string | null> {
   try {
     const rows = await db
       .select()
       .from(users)
       .where(eq(users.role, role))
       .limit(1);
-    return rows[0]?.id || 'unknown';
+    return rows[0]?.id ?? null;
   } catch {
-    return 'unknown';
+    return null;
   }
 }
 
@@ -393,8 +393,29 @@ export async function mediate(
     };
   }
 
-  // 3. Resolve userId if not provided
-  const resolvedUserId = userId || (await getFallbackUserId(role));
+  // 3. Resolve userId if not provided. If we still can't find one (e.g. anon
+  //    user with no seed row), bail out with a clear message instead of
+  //    letting a literal 'unknown' string hit the foreign-key constraint.
+  const resolvedUserId = userId ?? (await getFallbackUserId(role));
+  const intentsNeedingUser: IntentType[] = [
+    'create_ticket',
+    'create_service_ticket',
+    'schedule_appointment',
+    'query_tickets',
+    'query_appointments',
+  ];
+  if (!resolvedUserId && intentsNeedingUser.includes(intent)) {
+    return {
+      message:
+        role === 'anon'
+          ? '🔒 You need to sign in (or create an account) before I can do that — it lets me attach the request to your record.'
+          : 'I couldn\'t find your user record to attach this to. Please sign out and back in, then try again.',
+      intent,
+    };
+  }
+  // For tools that don't need a user (newsletter, help, etc.), an empty string
+  // is harmless because no DB write happens with it.
+  const safeUserId: string = resolvedUserId ?? '';
 
   // 4. Dispatch to the appropriate MCP tool
   let toolResult: ToolResult;
@@ -423,7 +444,7 @@ export async function mediate(
     }
 
     case 'create_service_ticket': {
-      const contactInfo = await getFallbackContactInfo(resolvedUserId);
+      const contactInfo = await getFallbackContactInfo(safeUserId);
 
       let urgencyLevel: 'low' | 'medium' | 'high' | 'urgent' = 'medium';
       const lower = message.toLowerCase();
@@ -441,7 +462,7 @@ export async function mediate(
           urgencyLevel,
           ...contactInfo,
         },
-        resolvedUserId
+        safeUserId
       );
       break;
     }
@@ -564,7 +585,7 @@ export async function mediate(
 
     case 'query_tickets':
       toolResult = await queryTickets({
-        userId: resolvedUserId,
+        userId: safeUserId,
         isAdmin: role === 'admin',
       });
       break;
@@ -588,7 +609,7 @@ export async function mediate(
     case 'create_ticket': {
       const ticketParams = extractTicketParams(message);
       toolResult = await createTicket({
-        userId: resolvedUserId,
+        userId: safeUserId,
         ...ticketParams,
       });
       break;
@@ -596,7 +617,7 @@ export async function mediate(
 
     case 'query_appointments':
       toolResult = await queryAppointments({
-        userId: resolvedUserId,
+        userId: safeUserId,
         isAdmin: role === 'admin',
       });
       break;
@@ -623,7 +644,7 @@ export async function mediate(
 
       const apptParams = extractAppointmentParams(message);
       toolResult = await scheduleAppointment({
-        userId: resolvedUserId,
+        userId: safeUserId,
         ...apptParams,
       });
       break;
