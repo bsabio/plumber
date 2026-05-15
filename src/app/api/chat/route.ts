@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { eq } from 'drizzle-orm';
+import { db } from '@/db';
+import { users } from '@/db/schema';
 import { mediate } from '@/lib/mediator';
 import {
+  clearCookie,
   parseCookies,
   SESSION_COOKIE_NAME,
   USER_LLM_KEY_COOKIE_NAME,
@@ -77,16 +81,32 @@ export async function POST(request: NextRequest) {
     const cookies = parseCookies(request.headers.get('cookie'));
     let sessionRole: UserRole | undefined;
     let sessionUserId: string | undefined;
+    let sessionValidatedAgainstDb = false;
+    let staleSessionDetected = false;
     const sessionToken = cookies[SESSION_COOKIE_NAME];
     if (sessionToken && (env.AUTH_SECRET || !env.isProduction)) {
       try {
         const payload = verifySessionToken(sessionToken, getAuthSecret());
         if (payload) {
-          if (typeof payload.role === 'string') {
-            sessionRole = payload.role as UserRole;
-          }
-          if (typeof payload.sub === 'string') {
-            sessionUserId = payload.sub;
+          const candidateSub = typeof payload.sub === 'string' ? payload.sub : undefined;
+          // Defence in depth: a cookie can be cryptographically valid but
+          // contain a stale `sub` that no longer maps to a DB row (e.g. an
+          // older OAuth flow stored Google's numeric sub instead of the DB
+          // users.id). Verify against the users table before trusting it.
+          if (candidateSub) {
+            const found = await db
+              .select({ id: users.id, role: users.role })
+              .from(users)
+              .where(eq(users.id, candidateSub))
+              .limit(1);
+            if (found[0]) {
+              sessionUserId = found[0].id;
+              sessionRole = found[0].role as UserRole;
+              sessionValidatedAgainstDb = true;
+            } else {
+              staleSessionDetected = true;
+              log.warn('session sub does not match any users.id; treating as anon');
+            }
           }
         }
       } catch (e) {
@@ -103,11 +123,13 @@ export async function POST(request: NextRequest) {
       headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '3fb259' },
       body: JSON.stringify({
         sessionId: '3fb259',
-        hypothesisId: 'H1',
+        hypothesisId: 'H5',
         location: 'api/chat/route.ts:resolved',
         message: 'chat resolved identity',
         data: {
           hasSessionToken: !!sessionToken,
+          sessionValidatedAgainstDb,
+          staleSessionDetected,
           hasSessionRole: !!sessionRole,
           hasSessionUserId: !!sessionUserId,
           userIdPrefix: typeof userId === 'string' ? userId.slice(0, 5) : null,
@@ -133,8 +155,14 @@ export async function POST(request: NextRequest) {
       log.warn('failed to decrypt user llm key cookie', e);
     }
 
-    const response = await mediate(message, role, userId, userKey);
-    return NextResponse.json(response);
+    const mediated = await mediate(message, role, userId, userKey);
+    const response = NextResponse.json(mediated);
+    if (staleSessionDetected) {
+      // Force the browser to drop the bad cookie so the user gets a fresh
+      // login on their next visit instead of looping on the same stale sub.
+      response.headers.append('Set-Cookie', clearCookie(SESSION_COOKIE_NAME));
+    }
+    return response;
   } catch (error) {
     log.error('chat API error:', error);
     return NextResponse.json(
