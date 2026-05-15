@@ -81,7 +81,6 @@ export async function POST(request: NextRequest) {
     const cookies = parseCookies(request.headers.get('cookie'));
     let sessionRole: UserRole | undefined;
     let sessionUserId: string | undefined;
-    let sessionValidatedAgainstDb = false;
     let staleSessionDetected = false;
     const sessionToken = cookies[SESSION_COOKIE_NAME];
     if (sessionToken && (env.AUTH_SECRET || !env.isProduction)) {
@@ -102,7 +101,6 @@ export async function POST(request: NextRequest) {
             if (found[0]) {
               sessionUserId = found[0].id;
               sessionRole = found[0].role as UserRole;
-              sessionValidatedAgainstDb = true;
             } else {
               staleSessionDetected = true;
               log.warn('session sub does not match any users.id; treating as anon');
@@ -116,30 +114,6 @@ export async function POST(request: NextRequest) {
 
     const role: UserRole = sessionRole ?? claimedRole;
     const userId = sessionUserId ?? claimedUserId;
-
-    // #region agent log — verify chat sees correct userId/role from session
-    fetch('http://127.0.0.1:7582/ingest/dd9ece85-55f8-447a-bccf-22903c8b3d8e', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '3fb259' },
-      body: JSON.stringify({
-        sessionId: '3fb259',
-        hypothesisId: 'H5',
-        location: 'api/chat/route.ts:resolved',
-        message: 'chat resolved identity',
-        data: {
-          hasSessionToken: !!sessionToken,
-          sessionValidatedAgainstDb,
-          staleSessionDetected,
-          hasSessionRole: !!sessionRole,
-          hasSessionUserId: !!sessionUserId,
-          userIdPrefix: typeof userId === 'string' ? userId.slice(0, 5) : null,
-          userIdIsNumeric: typeof userId === 'string' ? /^\d+$/.test(userId) : false,
-          role,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
 
     // Pull the user-supplied Gemini key from the encrypted cookie if present.
     // We deliberately ignore any `apiKey` value in the request body to avoid

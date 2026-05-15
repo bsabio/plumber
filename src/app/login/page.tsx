@@ -32,8 +32,7 @@ export default function LoginPage() {
       const e = params.get('error');
       if (!e) return;
       const label = OAUTH_ERROR_LABELS[e] ?? `Sign-in failed: ${e}`;
-      const reason = params.get('reason');
-      setError(reason ? `${label} ${reason}` : label);
+      setError(label);
     });
     return () => {
       cancelled = true;

@@ -113,7 +113,6 @@ export async function GET(request: NextRequest) {
   }
 
   const info = await infoRes.json();
-  const googleSub: string | undefined = typeof info.sub === 'string' ? info.sub : undefined;
   const emailRaw: string | undefined = typeof info.email === 'string' ? info.email : undefined;
   const nameRaw: string | undefined = typeof info.name === 'string' ? info.name : undefined;
 
@@ -152,54 +151,12 @@ export async function GET(request: NextRequest) {
       dbUser = { id, role: 'authenticated' };
     }
   } catch (err) {
-    // Walk the .cause chain so the underlying Postgres / Neon error surfaces
-    // (Drizzle wraps the real error in DrizzleQueryError whose .message only
-    // shows the failed SQL).
-    const describe = (e: unknown, depth = 0): string => {
-      if (e == null || depth > 4) return '';
-      const o = e as { name?: string; code?: string; message?: string; cause?: unknown };
-      const head = [
-        o.name ? `${o.name}` : '',
-        o.code ? `[${o.code}]` : '',
-        o.message ?? String(e),
-      ]
-        .filter(Boolean)
-        .join(' ');
-      const tail = o.cause ? ` <- ${describe(o.cause, depth + 1)}` : '';
-      return head + tail;
-    };
-    const reason = describe(err) || 'unknown';
-    log.error('oauth user upsert failed', { reason, error: err });
-    const safe = encodeURIComponent(reason.slice(0, 350));
-    const redirect = new URL(
-      `/login?error=oauth_db&reason=${safe}`,
-      request.nextUrl.origin,
-    );
+    log.error('oauth user upsert failed', err);
+    const redirect = new URL('/login?error=oauth_db', request.nextUrl.origin);
     const response = NextResponse.redirect(redirect);
     response.headers.append('Set-Cookie', clearCookie(OAUTH_STATE_COOKIE_NAME));
     return response;
   }
-
-  // #region agent log — verify session.sub is the DB id, not Google's sub
-  fetch('http://127.0.0.1:7582/ingest/dd9ece85-55f8-447a-bccf-22903c8b3d8e', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '3fb259' },
-    body: JSON.stringify({
-      sessionId: '3fb259',
-      hypothesisId: 'H1',
-      location: 'auth/google/callback/route.ts:160',
-      message: 'oauth session resolved',
-      data: {
-        googleSubLen: googleSub?.length ?? 0,
-        googleSubIsNumeric: googleSub ? /^\d+$/.test(googleSub) : false,
-        dbUserId: dbUser.id,
-        dbUserIdPrefix: dbUser.id.startsWith('user_'),
-        role: dbUser.role,
-      },
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-  // #endregion
 
   const payload = {
     sub: dbUser.id,
