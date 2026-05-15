@@ -1,16 +1,44 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { PipeLogoIcon, PersonIcon, CustomerIcon } from '@/components/Icons';
 import { cn } from '@/lib/utils';
 
 type Tab = 'signin' | 'register';
+
+const OAUTH_ERROR_LABELS: Record<string, string> = {
+  oauth_state: 'Sign-in expired or was tampered with. Please try again.',
+  oauth_token: 'Google rejected the authorization code. Please try again.',
+  oauth_verify: 'Could not verify your Google identity. Please try again.',
+  oauth_no_email: 'Google did not return an email address.',
+  oauth_db: 'Could not save your account. Reason:',
+};
 
 export default function LoginPage() {
   const [tab, setTab] = useState<Tab>('signin');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+
+  // Surface OAuth-callback errors (?error=...&reason=...) on the page itself.
+  // Deferred to a microtask so the setError doesn't run synchronously inside
+  // the effect body (avoids react-hooks/set-state-in-effect).
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    let cancelled = false;
+    Promise.resolve().then(() => {
+      if (cancelled) return;
+      const params = new URLSearchParams(window.location.search);
+      const e = params.get('error');
+      if (!e) return;
+      const label = OAUTH_ERROR_LABELS[e] ?? `Sign-in failed: ${e}`;
+      const reason = params.get('reason');
+      setError(reason ? `${label} ${reason}` : label);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Sign-in fields
   const [siEmail, setSiEmail] = useState('');

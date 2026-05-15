@@ -152,8 +152,20 @@ export async function GET(request: NextRequest) {
       dbUser = { id, role: 'authenticated' };
     }
   } catch (err) {
-    log.error('oauth user upsert failed', err);
-    const redirect = new URL('/login?error=oauth_db', request.nextUrl.origin);
+    // Surface the actual reason both to Vercel logs AND in the redirect URL
+    // (truncated, URL-safe) so we can diagnose without sifting through logs.
+    const e = err as { message?: string; code?: string; cause?: { message?: string } };
+    const reason =
+      (e?.code && `${e.code}: ${e.message ?? ''}`) ||
+      e?.message ||
+      e?.cause?.message ||
+      String(err);
+    log.error('oauth user upsert failed', { reason, error: err });
+    const safe = encodeURIComponent(reason.slice(0, 200));
+    const redirect = new URL(
+      `/login?error=oauth_db&reason=${safe}`,
+      request.nextUrl.origin,
+    );
     const response = NextResponse.redirect(redirect);
     response.headers.append('Set-Cookie', clearCookie(OAUTH_STATE_COOKIE_NAME));
     return response;
