@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
+import { eq } from 'drizzle-orm';
+import { db } from '@/db';
+import { users } from '@/db/schema';
 import {
   OAUTH_STATE_COOKIE_NAME,
   buildSessionCookie,
@@ -7,6 +10,9 @@ import {
   parseCookies,
 } from '@/lib/auth-session';
 import { env, getAuthSecret } from '@/lib/env';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('auth/google/callback');
 
 const SESSION_MAX_AGE = 60 * 60 * 24 * 7;
 
@@ -107,10 +113,78 @@ export async function GET(request: NextRequest) {
   }
 
   const info = await infoRes.json();
+  const googleSub: string | undefined = typeof info.sub === 'string' ? info.sub : undefined;
+  const emailRaw: string | undefined = typeof info.email === 'string' ? info.email : undefined;
+  const nameRaw: string | undefined = typeof info.name === 'string' ? info.name : undefined;
+
+  if (!emailRaw) {
+    const redirect = new URL('/login?error=oauth_no_email', request.nextUrl.origin);
+    const response = NextResponse.redirect(redirect);
+    response.headers.append('Set-Cookie', clearCookie(OAUTH_STATE_COOKIE_NAME));
+    return response;
+  }
+
+  const email = emailRaw.toLowerCase();
+  const name = nameRaw || email.split('@')[0];
+
+  // Upsert a DB user keyed by email. The session's `sub` must be the DB
+  // `users.id` (not Google's `sub`) so that downstream FK constraints
+  // (tickets.user_id -> users.id, etc.) line up.
+  let dbUser: { id: string; role: 'anon' | 'authenticated' | 'admin' | 'technician' } | null = null;
+  try {
+    const existing = await db
+      .select({ id: users.id, role: users.role })
+      .from(users)
+      .where(eq(users.email, email))
+      .limit(1);
+
+    if (existing[0]) {
+      dbUser = existing[0];
+    } else {
+      const id = `user_${crypto.randomBytes(8).toString('hex')}`;
+      await db.insert(users).values({
+        id,
+        name,
+        email,
+        role: 'authenticated',
+        createdAt: new Date().toISOString(),
+      });
+      dbUser = { id, role: 'authenticated' };
+    }
+  } catch (err) {
+    log.error('oauth user upsert failed', err);
+    const redirect = new URL('/login?error=oauth_db', request.nextUrl.origin);
+    const response = NextResponse.redirect(redirect);
+    response.headers.append('Set-Cookie', clearCookie(OAUTH_STATE_COOKIE_NAME));
+    return response;
+  }
+
+  // #region agent log — verify session.sub is the DB id, not Google's sub
+  fetch('http://127.0.0.1:7582/ingest/dd9ece85-55f8-447a-bccf-22903c8b3d8e', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '3fb259' },
+    body: JSON.stringify({
+      sessionId: '3fb259',
+      hypothesisId: 'H1',
+      location: 'auth/google/callback/route.ts:160',
+      message: 'oauth session resolved',
+      data: {
+        googleSubLen: googleSub?.length ?? 0,
+        googleSubIsNumeric: googleSub ? /^\d+$/.test(googleSub) : false,
+        dbUserId: dbUser.id,
+        dbUserIdPrefix: dbUser.id.startsWith('user_'),
+        role: dbUser.role,
+      },
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
+  // #endregion
+
   const payload = {
-    sub: info.sub,
-    email: info.email,
-    name: info.name,
+    sub: dbUser.id,
+    email,
+    name,
+    role: dbUser.role,
   };
 
   const response = NextResponse.redirect(new URL('/', request.nextUrl.origin));

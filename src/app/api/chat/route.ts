@@ -97,6 +97,28 @@ export async function POST(request: NextRequest) {
     const role: UserRole = sessionRole ?? claimedRole;
     const userId = sessionUserId ?? claimedUserId;
 
+    // #region agent log — verify chat sees correct userId/role from session
+    fetch('http://127.0.0.1:7582/ingest/dd9ece85-55f8-447a-bccf-22903c8b3d8e', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '3fb259' },
+      body: JSON.stringify({
+        sessionId: '3fb259',
+        hypothesisId: 'H1',
+        location: 'api/chat/route.ts:resolved',
+        message: 'chat resolved identity',
+        data: {
+          hasSessionToken: !!sessionToken,
+          hasSessionRole: !!sessionRole,
+          hasSessionUserId: !!sessionUserId,
+          userIdPrefix: typeof userId === 'string' ? userId.slice(0, 5) : null,
+          userIdIsNumeric: typeof userId === 'string' ? /^\d+$/.test(userId) : false,
+          role,
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
+
     // Pull the user-supplied Gemini key from the encrypted cookie if present.
     // We deliberately ignore any `apiKey` value in the request body to avoid
     // logging or echoing it.
