@@ -115,7 +115,15 @@ export default function TicketsTable({ onTicketClick }: TicketsTableProps) {
   }, [statusFilter]);
 
   useEffect(() => {
-    fetchTickets();
+    // Defer to a microtask so the setState calls inside fetchTickets() are not
+    // synchronous from the effect body (avoids react-hooks/set-state-in-effect).
+    let cancelled = false;
+    Promise.resolve().then(() => {
+      if (!cancelled) void fetchTickets();
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [fetchTickets]);
 
   const handleRowClick = (ticket: Ticket) => {

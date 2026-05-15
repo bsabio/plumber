@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState } from 'react';
 import { useChatContext } from '@/context/chat-context';
 import { cn } from '@/lib/utils';
 
@@ -66,8 +66,10 @@ export default function CalendarScheduler({ onClose }: CalendarSchedulerProps) {
     setSelectedDate(null); setSlots([]); setSelectedSlot(null);
   };
 
-  // Fetch available slots for a date via the chat API
-  const fetchSlots = useCallback(async (dateStr: string) => {
+  // Fetch available slots for a date via the chat API.
+  // No useCallback — Next 16's React Compiler memoizes automatically and the
+  // manual deps tripped react-hooks/preserve-manual-memoization.
+  const fetchSlots = async (dateStr: string) => {
     setLoadingSlots(true);
     setSlots([]);
     setSelectedSlot(null);
@@ -83,14 +85,12 @@ export default function CalendarScheduler({ onClose }: CalendarSchedulerProps) {
       });
       if (!res.ok) throw new Error('fetch failed');
       const data = await res.json();
-      // Try to parse slots from the response data
       const available = data?.toolResult?.data?.availableSlots
         ?? data?.toolResult?.data?.[0]?.availableSlots
         ?? null;
       if (Array.isArray(available) && available.length > 0) {
         setSlots(available.map(String));
       } else {
-        // Fallback: show default slots
         setSlots(DEFAULT_SLOTS);
       }
     } catch {
@@ -98,7 +98,7 @@ export default function CalendarScheduler({ onClose }: CalendarSchedulerProps) {
     } finally {
       setLoadingSlots(false);
     }
-  }, [role, serviceType]);
+  };
 
   const handleDayClick = (day: number) => {
     const dateStr = toDateStr(year, month, day);
