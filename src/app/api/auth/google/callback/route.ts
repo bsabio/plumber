@@ -152,16 +152,25 @@ export async function GET(request: NextRequest) {
       dbUser = { id, role: 'authenticated' };
     }
   } catch (err) {
-    // Surface the actual reason both to Vercel logs AND in the redirect URL
-    // (truncated, URL-safe) so we can diagnose without sifting through logs.
-    const e = err as { message?: string; code?: string; cause?: { message?: string } };
-    const reason =
-      (e?.code && `${e.code}: ${e.message ?? ''}`) ||
-      e?.message ||
-      e?.cause?.message ||
-      String(err);
+    // Walk the .cause chain so the underlying Postgres / Neon error surfaces
+    // (Drizzle wraps the real error in DrizzleQueryError whose .message only
+    // shows the failed SQL).
+    const describe = (e: unknown, depth = 0): string => {
+      if (e == null || depth > 4) return '';
+      const o = e as { name?: string; code?: string; message?: string; cause?: unknown };
+      const head = [
+        o.name ? `${o.name}` : '',
+        o.code ? `[${o.code}]` : '',
+        o.message ?? String(e),
+      ]
+        .filter(Boolean)
+        .join(' ');
+      const tail = o.cause ? ` <- ${describe(o.cause, depth + 1)}` : '';
+      return head + tail;
+    };
+    const reason = describe(err) || 'unknown';
     log.error('oauth user upsert failed', { reason, error: err });
-    const safe = encodeURIComponent(reason.slice(0, 200));
+    const safe = encodeURIComponent(reason.slice(0, 350));
     const redirect = new URL(
       `/login?error=oauth_db&reason=${safe}`,
       request.nextUrl.origin,
